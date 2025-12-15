@@ -39,14 +39,19 @@ def api_proxy(path):
     """Proxy vers l'API backend"""
     from flask import request
     with api_app.test_client() as client:
+        # Construire URL complète avec paramètres
+        url = f'/api/{path}'
+        if request.query_string:
+            url += f'?{request.query_string.decode()}'
+        
         if request.method == 'GET':
-            resp = client.get(f'/api/{path}', query_string=request.query_string)
+            resp = client.get(url)
         elif request.method == 'POST':
-            resp = client.post(f'/api/{path}', json=request.get_json(), query_string=request.query_string)
+            resp = client.post(url, json=request.get_json())
         elif request.method == 'DELETE':
-            resp = client.delete(f'/api/{path}', json=request.get_json(), query_string=request.query_string)
+            resp = client.delete(url, json=request.get_json())
         else:
-            resp = client.open(f'/api/{path}', method=request.method)
+            resp = client.open(url, method=request.method)
         
         return resp.get_data(), resp.status_code, resp.headers.items()
 

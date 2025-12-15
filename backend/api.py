@@ -567,3 +567,105 @@ if __name__ == '__main__':
         print(f"⚠️ Warning: Could not init tables: {e}")
     
     app.run(host='0.0.0.0', port=5001, debug=True)
+
+
+# ============================================
+# ENDPOINTS GEOCODAGE (Autocomplétion adresses)
+# ============================================
+
+@app.route('/api/geocode/search', methods=['GET'])
+@limiter.limit("60 per minute")
+def search_geocode():
+    """Proxy pour recherche d'adresse (BAN puis Nominatim en fallback)"""
+    from urllib.parse import quote as url_quote
+    
+    query = request.args.get('q', '').strip()
+    limit = request.args.get('limit', '5')
+    
+    if not query:
+        return jsonify({'error': 'paramètre q requis'}), 400
+    
+    try:
+        # API BAN (Base Adresse Nationale - France)
+        ban_url = f"https://api-adresse.data.gouv.fr/search/?q={url_quote(query)}&limit={limit}"
+        ban_resp = requests.get(ban_url, timeout=10)
+        
+        if ban_resp.status_code == 200:
+            ban_data = ban_resp.json()
+            if ban_data.get('features'):
+                best_score = max((f.get('properties', {}).get('score', 0) for f in ban_data['features']), default=0)
+                
+                if best_score > 0.5:
+                    # Formater résultats BAN
+                    ban_features = []
+                    for feature in ban_data['features']:
+                        props = feature.get('properties', {})
+                        coords = feature.get('geometry', {}).get('coordinates', [])
+                        ban_features.append({
+                            'label': props.get('label', ''),
+                            'name': props.get('name', ''),
+                            'postcode': props.get('postcode', ''),
+                            'city': props.get('city', ''),
+                            'context': props.get('context', ''),
+                            'type': props.get('type', ''),
+                            'score': props.get('score', 0),
+                            'lon': coords[0] if len(coords) > 0 else None,
+                            'lat': coords[1] if len(coords) > 1 else None
+                        })
+                    return jsonify({'features': ban_features, 'source': 'ban'})
+        
+        # Fallback Nominatim (couverture mondiale)
+        nom_url = f"https://nominatim.openstreetmap.org/search?format=json&q={url_quote(query)}&limit={limit}&addressdetails=1"
+        nom_headers = {'User-Agent': 'Carette-Carpool-Widget/1.0'}
+        nom_resp = requests.get(nom_url, headers=nom_headers, timeout=10)
+        
+        if nom_resp.status_code == 200:
+            nom_data = nom_resp.json()
+            nom_features = []
+            for item in nom_data:
+                nom_features.append({
+                    'label': item.get('display_name', ''),
+                    'name': item.get('name', ''),
+                    'type': item.get('type', ''),
+                    'lon': float(item.get('lon', 0)),
+                    'lat': float(item.get('lat', 0))
+                })
+            return jsonify({'features': nom_features, 'source': 'nominatim'})
+        
+        return jsonify({'features': [], 'source': 'none'})
+        
+    except Exception as e:
+        logger.error(f"Error in search_geocode: {str(e)}")
+        if app.debug:
+            return jsonify({"error": str(e)}), 500
+        else:
+            return jsonify({"error": "Erreur serveur"}), 500
+
+
+@app.route('/api/geocode/reverse', methods=['GET'])
+@limiter.limit("60 per minute")
+def reverse_geocode():
+    """Géocodage inversé (coordonnées -> adresse)"""
+    lat = request.args.get('lat')
+    lon = request.args.get('lon')
+    
+    if not lat or not lon:
+        return jsonify({'error': 'lat et lon requis'}), 400
+    
+    try:
+        # Nominatim reverse geocoding
+        url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}"
+        headers = {'User-Agent': 'Carette-Carpool-Widget/1.0'}
+        resp = requests.get(url, headers=headers, timeout=10)
+        
+        if resp.status_code == 200:
+            return jsonify(resp.json())
+        else:
+            return jsonify({'error': 'Géocodage inversé échoué'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error in reverse_geocode: {str(e)}")
+        if app.debug:
+            return jsonify({"error": str(e)}), 500
+        else:
+            return jsonify({"error": "Erreur serveur"}), 500
