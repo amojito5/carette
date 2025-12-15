@@ -4,13 +4,24 @@ Extraction des endpoints carpool de l'API principale
 """
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+import logging
 import requests
 from pymysql.err import IntegrityError
 import json
 import math
 import sys
 import os
+
+# Charger variables d'environnement
+load_dotenv()
+
+# Configuration logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+logger = logging.getLogger(__name__)
 
 # Ajouter le dossier backend au path pour les imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -21,13 +32,15 @@ from route_buffer import create_buffer_from_route, create_buffer_simple
 from temporal_buffer import create_temporal_buffer
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = os.getenv('CARETTE_SECRET_KEY', 'dev-secret-change-me')
+app.debug = os.getenv('CARETTE_DEBUG', 'False').lower() == 'true'
 
-# CORS pour permettre l'intégration cross-origin
-CORS(
-    app,
-    resources={r"/api/*": {"origins": "*"}},
-    supports_credentials=True
-)
+# CORS restrictif
+allowed_origins = os.getenv('CARETTE_ALLOWED_ORIGINS', 'https://lemur-lensois.fr').split(',')
+CORS(app, resources={r"/api/*": {"origins": allowed_origins}}, supports_credentials=True)
+
+# Rate limiting
+limiter = Limiter(app=app, key_func=get_remote_address, default_limits=["200 per day", "50 per hour"], storage_uri="memory://")
 
 
 def estimate_realistic_duration(distance_meters, route_data=None):
@@ -133,6 +146,7 @@ def calculate_osrm_route(waypoints, get_alternatives=False):
 
 
 @app.route('/api/carpool/calculate-route', methods=['POST'])
+@limiter.limit("30 per minute")
 def calculate_route():
     """Calcule un itinéraire OSRM avec alternatives"""
     data = request.json
@@ -151,13 +165,26 @@ def calculate_route():
 
 
 @app.route("/api/carpool", methods=["POST"])
+@limiter.limit("10 per minute")
 def create_offer():
     """Créer une nouvelle offre de covoiturage"""
     data = request.json
-    user_id = data.get('user_id')
     
+    # Validation et sanitization
+    user_id = str(data.get('user_id', ''))[:255]
     if not user_id:
         return jsonify({"error": "user_id requis"}), 400
+    
+    # Limites de sécurité
+    try:
+        if data.get('seats_outbound'):
+            seats = int(data.get('seats_outbound'))
+            if not 1 <= seats <= 8:
+                return jsonify({"error": "Sièges invalides (1-8)"}), 400
+        if data.get('comment') and len(str(data.get('comment'))) > 1000:
+            return jsonify({"error": "Commentaire trop long (max 1000)"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "Format de données invalide"}), 400
     
     try:
         with sql.db_cursor() as cur:
@@ -223,6 +250,7 @@ def create_offer():
 
 
 @app.route("/api/carpool", methods=["GET"])
+@limiter.limit("30 per minute")
 def get_offers():
     """Récupérer les offres de covoiturage avec filtres optionnels"""
     try:
@@ -269,6 +297,7 @@ def get_offers():
 
 
 @app.route('/api/carpool/<int:offer_id>', methods=['GET'])
+@limiter.limit("40 per minute")
 def get_offer(offer_id):
     """Récupérer une offre spécifique avec ses réservations"""
     try:
@@ -317,6 +346,7 @@ def get_offer(offer_id):
 
 
 @app.route('/api/carpool/<int:offer_id>', methods=['DELETE'])
+@limiter.limit("10 per minute")
 def delete_offer(offer_id):
     """Supprimer une offre (seulement par son créateur)"""
     data = request.json
@@ -348,13 +378,40 @@ def delete_offer(offer_id):
 
 
 @app.route('/api/carpool/reserve', methods=['POST'])
+@limiter.limit("20 per minute")
 def create_reservation():
     """Créer une réservation pour une offre"""
     data = request.json
     
+    # Validation inputs
     required = ['offer_id', 'passenger_user_id', 'trip_type']
     if not all(k in data for k in required):
         return jsonify({"error": f"Champs requis: {required}"}), 400
+    
+    try:
+        offer_id = int(data['offer_id'])
+        if offer_id <= 0:
+            return jsonify({"error": "offer_id invalide"}), 400
+        
+        passenger_user_id = str(data['passenger_user_id'])[:255]
+        trip_type = str(data['trip_type'])
+        if trip_type not in ['outbound', 'return', 'both']:
+            return jsonify({"error": "trip_type invalide (outbound/return/both)"}), 400
+        
+        passengers = int(data.get('passengers', 1))
+        if not 1 <= passengers <= 8:
+            return jsonify({"error": "Nombre passagers invalide (1-8)"}), 400
+    except (ValueError, TypeError):
+        return jsonify({"error": "offer_id doit être un nombre"}), 400
+    
+    passenger_user_id = str(data['passenger_user_id'])[:255]
+    trip_type = str(data['trip_type'])
+    if trip_type not in ['outbound', 'return', 'both']:
+        return jsonify({"error": "trip_type invalide"}), 400
+    
+    passengers = int(data.get('passengers', 1))
+    if not 1 <= passengers <= 8:
+        return jsonify({"error": "Nombre passagers invalide (1-8)"}), 400
     
     try:
         with sql.db_cursor() as cur:
@@ -434,6 +491,7 @@ def get_my_reservations():
 
 
 @app.route('/api/carpool/search', methods=['GET'])
+@limiter.limit("60 per minute")
 def search_offers():
     """
     Recherche spatiale d'offres compatibles avec un trajet passager

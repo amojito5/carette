@@ -51,3 +51,4 @@ static/avatars/*
 dist/
 *.min.js
 *.bundle.js
+.env
