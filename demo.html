@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carette - Démo Widget Covoiturage</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            font-size: 3em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.95;
+        }
+        
+        .widget-container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .footer {
+            text-align: center;
+            color: white;
+            margin-top: 30px;
+            opacity: 0.8;
+        }
+        
+        .footer a {
+            color: white;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        
+        .footer a:hover {
+            text-decoration: underline;
+        }
+        
+        /* Mode sombre toggle */
+        .theme-toggle {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(255,255,255,0.2);
+            backdrop-filter: blur(10px);
+            border: none;
+            border-radius: 50px;
+            padding: 10px 20px;
+            color: white;
+            cursor: pointer;
+            font-size: 1em;
+            transition: all 0.3s;
+        }
+        
+        .theme-toggle:hover {
+            background: rgba(255,255,255,0.3);
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body>
+    <button class="theme-toggle" id="themeToggle">🌙 Mode Sombre</button>
+    
+    <div class="container">
+        <div class="header">
+            <h1>🚗 Carette</h1>
+            <p>Widget de covoiturage nouvelle génération</p>
+        </div>
+        
+        <div class="widget-container">
+            <!-- Widget Carette -->
+            <carpool-offer-widget 
+                color-outbound="#c47cffff" 
+                color-return="#ff9c3fff"
+                detour-color="#ecaeffff"
+                font-family="'Sofia Sans', -apple-system, BlinkMacSystemFont, sans-serif"
+                theme="light"
+                event-id="demo-event-2025"
+                event-name="Festival Rock Live 2025"
+                event-location="Stade Bollaert-Delelis"
+                event-date="2025-07-15"
+                event-time="20:00"
+                page-url="https://carette.app/demo"
+            >
+            </carpool-offer-widget>
+        </div>
+        
+        <div class="footer">
+            <p>
+                Propulsé par <a href="https://github.com/carette" target="_blank">Carette</a> 
+                • Intégration facile pour vos événements
+            </p>
+        </div>
+    </div>
+
+    <!-- Widget Script -->
+    <script type="module" src="./frontend/carpool-widget.js"></script>
+    
+    <!-- Theme Toggle Logic -->
+    <script>
+        const toggle = document.getElementById('themeToggle');
+        const widget = document.querySelector('carpool-offer-widget');
+        let isDark = false;
+        
+        toggle.addEventListener('click', () => {
+            isDark = !isDark;
+            widget.setAttribute('theme', isDark ? 'dark' : 'light');
+            toggle.textContent = isDark ? '☀️ Mode Clair' : '🌙 Mode Sombre';
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+{
+  "name": "carette-widget",
+  "version": "1.0.0",
+  "description": "Widget de covoiturage autonome et intégrable",
+  "main": "frontend/carpool-widget.js",
+  "type": "module",
+  "scripts": {
+    "dev": "python backend/api.py",
+    "init-db": "python backend/sql.py",
+    "build": "echo 'Build step - TODO: add rollup/esbuild'",
+    "test": "echo 'Tests - TODO: add Jest'"
+  },
+  "keywords": [
+    "carpool",
+    "covoiturage",
+    "widget",
+    "web-component",
+    "events"
+  ],
+  "author": "Carette Team",
+  "license": "UNLICENSED",
+  "private": true,
+  "devDependencies": {
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-terser": "^0.4.4",
+    "rollup": "^4.9.0"
+  },
+  "dependencies": {}
+}
