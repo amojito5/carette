@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Covoiturage Récurrent - Decathlon</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .header h1 {
+            margin: 0 0 10px 0;
+            color: #1a202c;
+        }
+        .header p {
+            margin: 0;
+            color: #718096;
+        }
+        .badge {
+            display: inline-block;
+            background: #48bb78;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        .widget-container {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>
+                🚗 Covoiturage Decathlon Villeneuve
+                <span class="badge">MODE RÉCURRENT</span>
+            </h1>
+            <p>Trouvez des collègues pour vos trajets réguliers domicile-travail</p>
+        </div>
+        
+        <div class="widget-container">
+            <carpool-offer-widget 
+                data-mode="recurrent"
+                data-company-id="1"
+                data-company-name="Decathlon"
+                data-sites='[
+                    {"id": 1, "name": "Villeneuve-d&#39;Ascq", "address": "Bd de Mons, 59650 Villeneuve-d&#39;Ascq"},
+                    {"id": 2, "name": "Croix", "address": "Rue du Molinel, 59170 Croix"},
+                    {"id": 3, "name": "Lesquin", "address": "Zone commerciale, 59810 Lesquin"}
+                ]'>
+            </carpool-offer-widget>
+        </div>
+    </div>
+
+    <!-- Widget Script -->
+    <script type="module" src="./frontend/carpool-widget.js"></script>
+</body>
+</html>

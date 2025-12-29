@@ -5,13 +5,25 @@ Gestion simplifiée de la base de données MySQL
 import pymysql
 from contextlib import contextmanager
 import os
+import sys
 
-# Configuration DB (variables d'environnement avec fallback)
+# Configuration DB (variables d'environnement - OBLIGATOIRES)
 DB_NAME = os.getenv('CARETTE_DB_NAME', 'carette_db')
 DB_HOST = os.getenv('CARETTE_DB_HOST', 'localhost')
 DB_USER = os.getenv('CARETTE_DB_USER', 'carette_user')
-DB_PASSWORD = os.getenv('CARETTE_DB_PASSWORD', 'Carette2025!')
-DB_ROOT_PASSWORD = os.getenv('CARETTE_DB_ROOT_PASSWORD', 'Root#2025')
+DB_PASSWORD = os.getenv('CARETTE_DB_PASSWORD')
+DB_ROOT_PASSWORD = os.getenv('CARETTE_DB_ROOT_PASSWORD')
+
+# Validation: Les mots de passe DOIVENT être définis via variables d'environnement
+if not DB_PASSWORD:
+    print("❌ ERREUR: Variable d'environnement CARETTE_DB_PASSWORD non définie")
+    print("   Créez un fichier .env basé sur .env.example avec un mot de passe sécurisé")
+    sys.exit(1)
+
+if not DB_ROOT_PASSWORD:
+    print("❌ ERREUR: Variable d'environnement CARETTE_DB_ROOT_PASSWORD non définie")
+    print("   Créez un fichier .env basé sur .env.example avec un mot de passe sécurisé")
+    sys.exit(1)
 
 
 def get_connection(user='app', autocommit=True):
@@ -115,13 +127,19 @@ def create_carpool_reservations_table():
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 offer_id INT NOT NULL,
                 passenger_user_id VARCHAR(255) NOT NULL,
+                passenger_email VARCHAR(255),
+                passenger_name VARCHAR(100),
+                passenger_phone VARCHAR(20),
                 passengers INT NOT NULL DEFAULT 1,
                 trip_type ENUM('outbound', 'return', 'both') NOT NULL DEFAULT 'outbound',
                 meeting_point_coords JSON,
                 meeting_point_address VARCHAR(500),
                 detour_route JSON,
+                detour_time INT,
+                confirmation_token VARCHAR(64) UNIQUE,
                 status ENUM('pending', 'confirmed', 'rejected', 'cancelled') NOT NULL DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                confirmed_at DATETIME,
                 pickup_order INT,
                 pickup_time DATETIME,
                 pickup_coords JSON,
@@ -130,6 +148,8 @@ def create_carpool_reservations_table():
                 FOREIGN KEY (offer_id) REFERENCES carpool_offers(id) ON DELETE CASCADE,
                 INDEX idx_offer_id (offer_id),
                 INDEX idx_passenger_user_id (passenger_user_id),
+                INDEX idx_passenger_email (passenger_email),
+                INDEX idx_confirmation_token (confirmation_token),
                 INDEX idx_status (status),
                 UNIQUE KEY uniq_user_offer_trip (offer_id, passenger_user_id, trip_type)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci

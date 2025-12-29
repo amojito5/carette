@@ -1,0 +1,480 @@
+"""
+Carette - API Simplifiée v2 (Sans comptes utilisateurs)
+Backend Flask pour workflow email/WhatsApp
+"""
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+import os
+from datetime import datetime, timedelta
+import json
+
+# Imports locaux
+from sql_v2 import db_cursor
+from validation import (
+    validate_email, validate_coordinates, sanitize_text, 
+    validate_datetime, validate_integer
+)
+from emails import (
+    generate_confirmation_token,
+    email_new_reservation_to_driver,
+    email_reservation_confirmed_to_passenger,
+    email_reservation_rejected_to_passenger,
+    email_payment_simulation
+)
+
+# Configuration Flask
+app = Flask(__name__)
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
+
+if not app.config['SECRET_KEY']:
+    raise ValueError("❌ SECRET_KEY doit être définie dans .env")
+
+# CORS
+ALLOWED_ORIGINS = os.getenv('ALLOWED_ORIGINS', 'http://localhost:8080').split(',')
+CORS(app, origins=ALLOWED_ORIGINS)
+
+# Rate limiting
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri=os.getenv('REDIS_URL', 'memory://')
+)
+
+
+# ============================================
+# ENDPOINTS - OFFRES
+# ============================================
+
+@app.route('/api/v2/offers', methods=['POST'])
+@limiter.limit("10 per hour")
+def create_offer():
+    """Publier une nouvelle offre de covoiturage"""
+    try:
+        data = request.json
+        
+        # Validation
+        driver_email = validate_email(data.get('driver_email'))
+        driver_name = sanitize_text(data.get('driver_name', ''), max_length=100)
+        driver_phone = sanitize_text(data.get('driver_phone', ''), max_length=20)
+        
+        departure = sanitize_text(data.get('departure'), max_length=255)
+        destination = sanitize_text(data.get('destination'), max_length=255)
+        datetime_obj = validate_datetime(data.get('datetime'), allow_past=True)
+        datetime_str = datetime_obj.strftime('%Y-%m-%d %H:%M:%S')
+        seats = validate_integer(data.get('seats_available', 1), min_val=1, max_val=8)
+        
+        if not all([driver_email, driver_phone, departure, destination, datetime_str]):
+            return jsonify({'error': 'Champs obligatoires manquants'}), 400
+        
+        # Coordonnées (optionnel)
+        departure_coords = None
+        destination_coords = None
+        
+        if data.get('departure_coords'):
+            lat, lon = validate_coordinates(
+                data['departure_coords'].get('lat'),
+                data['departure_coords'].get('lon')
+            )
+            departure_coords = json.dumps({'lat': lat, 'lon': lon})
+        
+        if data.get('destination_coords'):
+            lat, lon = validate_coordinates(
+                data['destination_coords'].get('lat'),
+                data['destination_coords'].get('lon')
+            )
+            destination_coords = json.dumps({'lat': lat, 'lon': lon})
+        
+        # Événement (optionnel)
+        event_id = sanitize_text(data.get('event_id', ''), max_length=255)
+        event_name = sanitize_text(data.get('event_name', ''), max_length=255)
+        event_location = sanitize_text(data.get('event_location', ''), max_length=255)
+        event_date = data.get('event_date')
+        
+        # Date d'expiration (7 jours par défaut)
+        expires_at = (datetime_obj + timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Insertion BDD
+        with db_cursor() as cur:
+            cur.execute("""
+                INSERT INTO carpool_offers_v2 
+                (driver_email, driver_name, driver_phone, departure, destination, 
+                 departure_coords, destination_coords, datetime, seats_available, 
+                 event_id, event_name, event_location, event_date, expires_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (driver_email, driver_name, driver_phone, departure, destination,
+                  departure_coords, destination_coords, datetime_str, seats,
+                  event_id, event_name, event_location, event_date, expires_at))
+            
+            offer_id = cur.lastrowid
+        
+        return jsonify({
+            'success': True,
+            'offer_id': offer_id,
+            'message': 'Offre publiée avec succès'
+        }), 201
+        
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        app.logger.error(f"Erreur création offre: {e}")
+        return jsonify({'error': 'Erreur serveur'}), 500
+
+
+@app.route('/api/v2/offers', methods=['GET'])
+@limiter.limit("30 per minute")
+def search_offers():
+    """Rechercher des offres de covoiturage"""
+    try:
+        # Paramètres de recherche
+        departure = request.args.get('departure', '')
+        destination = request.args.get('destination', '')
+        date = request.args.get('date')
+        event_id = request.args.get('event_id')
+        
+        query = """
+            SELECT id, driver_email, driver_name, driver_phone,
+                   departure, destination, departure_coords, destination_coords,
+                   datetime, seats_available, status,
+                   event_id, event_name, event_location, event_date,
+                   created_at
+            FROM carpool_offers_v2
+            WHERE status = 'active'
+              AND datetime > NOW()
+              AND seats_available > 0
+        """
+        params = []
+        
+        if departure:
+            query += " AND departure LIKE %s"
+            params.append(f"%{departure}%")
+        
+        if destination:
+            query += " AND destination LIKE %s"
+            params.append(f"%{destination}%")
+        
+        if date:
+            query += " AND DATE(datetime) = %s"
+            params.append(date)
+        
+        if event_id:
+            query += " AND event_id = %s"
+            params.append(event_id)
+        
+        query += " ORDER BY datetime ASC LIMIT 50"
+        
+        with db_cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            
+            offers = []
+            for row in rows:
+                # Masquer l'email/téléphone du conducteur jusqu'à réservation confirmée
+                offers.append({
+                    'id': row[0],
+                    'driver_name': row[2] or 'Conducteur',
+                    'departure': row[4],
+                    'destination': row[5],
+                    'departure_coords': json.loads(row[6]) if row[6] else None,
+                    'destination_coords': json.loads(row[7]) if row[7] else None,
+                    'datetime': row[8].strftime('%Y-%m-%d %H:%M:%S'),
+                    'seats_available': row[9],
+                    'event_id': row[11],
+                    'event_name': row[12],
+                    'event_location': row[13],
+                    'event_date': row[14].strftime('%Y-%m-%d') if row[14] else None,
+                    'created_at': row[15].strftime('%Y-%m-%d %H:%M:%S')
+                })
+        
+        return jsonify({
+            'success': True,
+            'count': len(offers),
+            'offers': offers
+        }), 200
+        
+    except Exception as e:
+        app.logger.error(f"Erreur recherche offres: {e}")
+        return jsonify({'error': 'Erreur serveur'}), 500
+
+
+# ============================================
+# ENDPOINTS - RÉSERVATIONS
+# ============================================
+
+@app.route('/api/v2/reservations', methods=['POST'])
+@limiter.limit("5 per hour")
+def create_reservation():
+    """Créer une nouvelle réservation (avec simulation paiement)"""
+    try:
+        data = request.json
+        
+        # Validation
+        offer_id = validate_integer(data.get('offer_id'), min_val=1)
+        passenger_email = validate_email(data.get('passenger_email'))
+        passenger_name = sanitize_text(data.get('passenger_name', ''), max_length=100)
+        passenger_phone = sanitize_text(data.get('passenger_phone', ''), max_length=20)
+        passengers_count = validate_integer(data.get('passengers_count', 1), min_val=1, max_val=4)
+        
+        if not all([offer_id, passenger_email, passenger_phone]):
+            return jsonify({'error': 'Champs obligatoires manquants'}), 400
+        
+        # Vérifier l'offre existe et a des places
+        with db_cursor() as cur:
+            cur.execute("""
+                SELECT id, driver_email, driver_name, driver_phone,
+                       departure, destination, datetime, seats_available
+                FROM carpool_offers_v2
+                WHERE id = %s AND status = 'active' AND seats_available >= %s
+            """, (offer_id, passengers_count))
+            
+            offer = cur.fetchone()
+            if not offer:
+                return jsonify({'error': 'Offre non disponible ou places insuffisantes'}), 404
+            
+            # Vérifier pas de doublon
+            cur.execute("""
+                SELECT id FROM carpool_reservations_v2
+                WHERE offer_id = %s AND passenger_email = %s AND status != 'cancelled'
+            """, (offer_id, passenger_email))
+            
+            if cur.fetchone():
+                return jsonify({'error': 'Vous avez déjà une réservation pour ce trajet'}), 400
+            
+            # Créer la réservation
+            cur.execute("""
+                INSERT INTO carpool_reservations_v2
+                (offer_id, passenger_email, passenger_name, passenger_phone, 
+                 passengers_count, payment_status)
+                VALUES (%s, %s, %s, %s, %s, 'simulated')
+            """, (offer_id, passenger_email, passenger_name, passenger_phone, passengers_count))
+            
+            reservation_id = cur.lastrowid
+            
+            # Créer les tokens de confirmation
+            accept_token = generate_confirmation_token()
+            reject_token = generate_confirmation_token()
+            expires_at = (datetime.now() + timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+            
+            cur.execute("""
+                INSERT INTO confirmation_tokens (token, reservation_id, action, expires_at)
+                VALUES (%s, %s, 'accept', %s), (%s, %s, 'reject', %s)
+            """, (accept_token, reservation_id, expires_at,
+                  reject_token, reservation_id, expires_at))
+        
+        # Envoyer les emails
+        offer_details = {
+            'departure': offer[4],
+            'destination': offer[5],
+            'datetime': offer[6].strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        # Email au conducteur
+        email_new_reservation_to_driver(
+            driver_email=offer[1],
+            driver_name=offer[2] or 'Conducteur',
+            passenger_name=passenger_name or 'Passager',
+            passenger_email=passenger_email,
+            passenger_phone=passenger_phone,
+            offer_details=offer_details,
+            accept_token=accept_token,
+            reject_token=reject_token
+        )
+        
+        # Email au passager (simulation paiement)
+        email_payment_simulation(
+            passenger_email=passenger_email,
+            passenger_name=passenger_name or 'Passager',
+            offer_details=offer_details
+        )
+        
+        return jsonify({
+            'success': True,
+            'reservation_id': reservation_id,
+            'message': 'Réservation créée - Emails envoyés',
+            'payment_simulated': True
+        }), 201
+        
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        app.logger.error(f"Erreur création réservation: {e}")
+        return jsonify({'error': 'Erreur serveur'}), 500
+
+
+@app.route('/api/v2/confirm/<token>', methods=['GET'])
+def confirm_reservation(token):
+    """Confirmer ou refuser une réservation (lien dans email)"""
+    try:
+        with db_cursor() as cur:
+            # Vérifier le token
+            cur.execute("""
+                SELECT id, reservation_id, action, used, expires_at
+                FROM confirmation_tokens
+                WHERE token = %s
+            """, (token,))
+            
+            token_data = cur.fetchone()
+            if not token_data:
+                return "❌ Lien invalide", 404
+            
+            token_id, reservation_id, action, used, expires_at = token_data
+            
+            # Vérifier validité
+            if used:
+                return "⚠️ Ce lien a déjà été utilisé", 400
+            
+            if datetime.now() > expires_at:
+                return "⏰ Ce lien a expiré", 400
+            
+            # Récupérer les infos de réservation
+            cur.execute("""
+                SELECT r.id, r.offer_id, r.passenger_email, r.passenger_name,
+                       o.driver_email, o.driver_name, o.driver_phone,
+                       o.departure, o.destination, o.datetime
+                FROM carpool_reservations_v2 r
+                JOIN carpool_offers_v2 o ON r.offer_id = o.id
+                WHERE r.id = %s
+            """, (reservation_id,))
+            
+            reservation = cur.fetchone()
+            if not reservation:
+                return "❌ Réservation introuvable", 404
+            
+            # Action
+            if action == 'accept':
+                # Accepter la réservation
+                cur.execute("""
+                    UPDATE carpool_reservations_v2
+                    SET status = 'confirmed', confirmed_at = NOW()
+                    WHERE id = %s
+                """, (reservation_id,))
+                
+                # Décrémenter les places
+                cur.execute("""
+                    UPDATE carpool_offers_v2
+                    SET seats_available = seats_available - 1
+                    WHERE id = %s
+                """, (reservation[1],))
+                
+                # Marquer le token comme utilisé
+                cur.execute("""
+                    UPDATE confirmation_tokens
+                    SET used = TRUE, used_at = NOW()
+                    WHERE id = %s
+                """, (token_id,))
+                
+                # Email au passager
+                offer_details = {
+                    'departure': reservation[7],
+                    'destination': reservation[8],
+                    'datetime': reservation[9].strftime('%Y-%m-%d %H:%M:%S')
+                }
+                
+                email_reservation_confirmed_to_passenger(
+                    passenger_email=reservation[2],
+                    passenger_name=reservation[3] or 'Passager',
+                    driver_name=reservation[5] or 'Conducteur',
+                    driver_email=reservation[4],
+                    driver_phone=reservation[6],
+                    offer_details=offer_details
+                )
+                
+                return """
+                <!DOCTYPE html>
+                <html lang="fr">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Réservation acceptée</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; }
+                        .success { color: #4CAF50; font-size: 48px; }
+                        h1 { color: #333; }
+                        p { color: #666; line-height: 1.6; }
+                    </style>
+                </head>
+                <body>
+                    <div class="success">✅</div>
+                    <h1>Réservation acceptée !</h1>
+                    <p>Le passager a reçu une confirmation par email avec vos coordonnées.</p>
+                    <p>Vous pouvez fermer cette page.</p>
+                </body>
+                </html>
+                """, 200
+                
+            else:  # reject
+                # Refuser la réservation
+                cur.execute("""
+                    UPDATE carpool_reservations_v2
+                    SET status = 'rejected'
+                    WHERE id = %s
+                """, (reservation_id,))
+                
+                # Marquer le token comme utilisé
+                cur.execute("""
+                    UPDATE confirmation_tokens
+                    SET used = TRUE, used_at = NOW()
+                    WHERE id = %s
+                """, (token_id,))
+                
+                # Email au passager
+                offer_details = {
+                    'departure': reservation[7],
+                    'destination': reservation[8],
+                    'datetime': reservation[9].strftime('%Y-%m-%d %H:%M:%S')
+                }
+                
+                email_reservation_rejected_to_passenger(
+                    passenger_email=reservation[2],
+                    passenger_name=reservation[3] or 'Passager',
+                    driver_name=reservation[5] or 'Conducteur',
+                    offer_details=offer_details
+                )
+                
+                return """
+                <!DOCTYPE html>
+                <html lang="fr">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Réservation refusée</title>
+                    <style>
+                        body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; }
+                        .info { color: #ff9800; font-size: 48px; }
+                        h1 { color: #333; }
+                        p { color: #666; line-height: 1.6; }
+                    </style>
+                </head>
+                <body>
+                    <div class="info">ℹ️</div>
+                    <h1>Réservation refusée</h1>
+                    <p>Le passager a été informé par email.</p>
+                    <p>Vous pouvez fermer cette page.</p>
+                </body>
+                </html>
+                """, 200
+        
+    except Exception as e:
+        app.logger.error(f"Erreur confirmation: {e}")
+        return "❌ Erreur serveur", 500
+
+
+# ============================================
+# ENDPOINT - SANTÉ
+# ============================================
+
+@app.route('/api/v2/health', methods=['GET'])
+def health():
+    """Vérifier l'état du service"""
+    try:
+        with db_cursor() as cur:
+            cur.execute("SELECT 1")
+        return jsonify({'status': 'healthy', 'version': 'v2'}), 200
+    except:
+        return jsonify({'status': 'unhealthy'}), 500
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)

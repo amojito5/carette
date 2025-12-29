@@ -1,0 +1,1401 @@
+"""
+Carette - API backend autonome pour le widget de covoiturage
+Extraction des endpoints carpool de l'API principale
+"""
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from datetime import datetime, timedelta
+from dotenv import load_dotenv
+import logging
+import requests
+from pymysql.err import IntegrityError
+import json
+import math
+import sys
+import os
+
+# Charger variables d'environnement
+load_dotenv()
+
+# Configuration logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+logger = logging.getLogger(__name__)
+
+# Ajouter le dossier backend au path pour les imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Import des modules DB, buffer géographique et validation
+import sql
+import init_carpool_tables
+from route_buffer import create_buffer_from_route, create_buffer_simple
+from temporal_buffer import create_temporal_buffer, calculate_detour_time_osrm
+from validation import (
+    validate_coordinates, sanitize_text, validate_datetime,
+    validate_integer, validate_user_id, validate_email
+)
+# Import modules v2 pour flux sans comptes
+try:
+    from sql import db_cursor as db_cursor_v2  # Utiliser sql au lieu de sql_v2
+    from emails import (
+        generate_confirmation_token,
+        email_new_reservation_to_driver,
+        email_reservation_confirmed_to_passenger,
+        email_payment_simulation
+    )
+    V2_ENABLED = True
+    logger.info("✅ API v2 (email/WhatsApp workflow) activée")
+except ImportError as e:
+    V2_ENABLED = False
+    logger.warning(f"⚠️  API v2 non disponible: {e}")
+
+app = Flask(__name__)
+
+# Initialiser les tables carpool au démarrage (création automatique si inexistantes)
+try:
+    init_carpool_tables.init_carpool_tables()
+    logger.info("✅ Tables carpool initialisées")
+except Exception as e:
+    logger.error(f"❌ Erreur initialisation tables: {e}")
+    # Ne pas bloquer le démarrage si c'est juste un problème de colonnes existantes
+    if "Duplicate column" not in str(e):
+        raise
+
+# SECRET_KEY obligatoire en production
+SECRET_KEY = os.getenv('CARETTE_SECRET_KEY')
+if not SECRET_KEY:
+    if os.getenv('CARETTE_DEBUG', 'False').lower() == 'true':
+        logger.warning("⚠️  CARETTE_SECRET_KEY non définie, utilisation d'une clé de développement")
+        SECRET_KEY = 'dev-insecure-key-change-me-' + os.urandom(24).hex()
+    else:
+        logger.error("❌ CARETTE_SECRET_KEY doit être définie en production")
+        sys.exit(1)
+
+app.config['SECRET_KEY'] = SECRET_KEY
+app.debug = os.getenv('CARETTE_DEBUG', 'False').lower() == 'true'
+
+# CORS restrictif - Validation des origines
+allowed_origins_str = os.getenv('CARETTE_ALLOWED_ORIGINS', '')
+if not allowed_origins_str:
+    if app.debug:
+        logger.warning("⚠️  CARETTE_ALLOWED_ORIGINS non définie, autorisation localhost uniquement")
+        allowed_origins = ['http://localhost:3000', 'http://localhost:8000', 'http://localhost:9000']
+    else:
+        logger.error("❌ CARETTE_ALLOWED_ORIGINS doit être définie en production")
+        sys.exit(1)
+else:
+    allowed_origins = [origin.strip() for origin in allowed_origins_str.split(',') if origin.strip()]
+
+# Configuration CORS stricte
+CORS(app, resources={
+    r"/api/*": {
+        "origins": allowed_origins,
+        "methods": ["GET", "POST", "DELETE"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+}, supports_credentials=True)
+
+# Rate limiting avec Redis (ou mémoire en dev)
+storage_uri = os.getenv('REDIS_URL', 'memory://')
+if storage_uri == 'memory://' and not app.debug:
+    logger.warning("⚠️  Rate limiting en mémoire (non recommandé en production). Utilisez Redis.")
+
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri=storage_uri
+)
+
+
+def estimate_realistic_duration(distance_meters, route_data=None):
+    """
+    Estime une durée réaliste de trajet en tenant compte :
+    - De la distance
+    - Du type de route (autoroute, nationale, etc.)
+    - Des conditions de circulation typiques
+    """
+    if not distance_meters or distance_meters <= 0:
+        return 0
+    
+    # Vitesse moyenne de base : 50 km/h (circulation urbaine/mixte)
+    base_speed_kmh = 50
+    
+    # Si on a des données de route OSRM, analyser pour ajuster
+    if route_data and isinstance(route_data, dict):
+        geometry = route_data.get('geometry', {})
+        if isinstance(geometry, dict) and 'coordinates' in geometry:
+            coords = geometry['coordinates']
+            # Routes longues (>50km) : probablement autoroute, vitesse plus élevée
+            if distance_meters > 50000:
+                base_speed_kmh = 90
+            # Routes moyennes (10-50km) : nationale/départementale
+            elif distance_meters > 10000:
+                base_speed_kmh = 70
+    
+    # Calcul durée en secondes
+    distance_km = distance_meters / 1000
+    duration_hours = distance_km / base_speed_kmh
+    duration_seconds = duration_hours * 3600
+    
+    # Ajouter 10% de marge pour les imprévus (feux, ralentissements)
+    duration_seconds *= 1.1
+    
+    return int(duration_seconds)
+
+
+def calculate_osrm_route(waypoints, get_alternatives=False):
+    """
+    Calcule un itinéraire via OSRM avec support des alternatives
+    
+    Args:
+        waypoints: Liste de [lon, lat] pour l'itinéraire
+        get_alternatives: Si True, retourne jusqu'à 3 routes alternatives
+    
+    Returns:
+        Dict avec route principale et alternatives si demandées
+    """
+    if not waypoints or len(waypoints) < 2:
+        return {"error": "Au moins 2 points requis"}
+    
+    # Serveurs OSRM avec fallback
+    servers = [
+        'https://router.project-osrm.org',
+        'https://routing.openstreetmap.de/routed-car',
+        'http://router.project-osrm.org'
+    ]
+    
+    # Construire URL avec coordonnées
+    coords_str = ';'.join([f"{lon},{lat}" for lon, lat in waypoints])
+    
+    for server in servers:
+        try:
+            url = f"{server}/route/v1/driving/{coords_str}"
+            params = {
+                'overview': 'full',
+                'geometries': 'geojson',
+                'steps': 'true'
+            }
+            
+            if get_alternatives:
+                params['alternatives'] = 3
+            
+            resp = requests.get(url, params=params, timeout=10)
+            
+            if resp.status_code == 200:
+                data = resp.json()
+                
+                if data.get('code') == 'Ok' and 'routes' in data:
+                    routes = data['routes']
+                    
+                    result = {
+                        'route': routes[0],
+                        'alternatives': routes[1:] if get_alternatives and len(routes) > 1 else []
+                    }
+                    
+                    # Ajouter durées réalistes estimées
+                    for r in [result['route']] + result['alternatives']:
+                        r['realistic_duration'] = estimate_realistic_duration(
+                            r.get('distance', 0),
+                            r
+                        )
+                    
+                    return result
+        
+        except Exception as e:
+            print(f"⚠️ OSRM {server} failed: {e}")
+            continue
+    
+    return {"error": "Tous les serveurs OSRM ont échoué"}
+
+
+@app.route('/api/carpool/calculate-route', methods=['POST'])
+@limiter.limit("30 per minute")
+def calculate_route():
+    """Calcule un itinéraire OSRM avec alternatives"""
+    data = request.json
+    waypoints = data.get('waypoints', [])
+    get_alternatives = data.get('alternatives', False)
+    
+    if not waypoints or len(waypoints) < 2:
+        return jsonify({"error": "Au moins 2 waypoints requis"}), 400
+    
+    result = calculate_osrm_route(waypoints, get_alternatives)
+    
+    if 'error' in result:
+        return jsonify(result), 500
+    
+    # Transformer au format attendu par le widget: {routes: [...]}
+    routes = [result['route']] + result.get('alternatives', [])
+    return jsonify({'routes': routes})
+
+
+@app.route("/api/carpool", methods=["POST"])
+@limiter.limit("10 per minute")
+def create_offer():
+    """Créer une nouvelle offre de covoiturage"""
+    data = request.json
+    
+    if not data:
+        return jsonify({"error": "Données requises"}), 400
+    
+    # Validation stricte des entrées
+    try:
+        # User ID (requis)
+        user_id = validate_user_id(data.get('user_id'))
+        
+        # Champs texte
+        departure = sanitize_text(data.get('departure', ''), max_length=255)
+        destination = sanitize_text(data.get('destination', ''), max_length=255)
+        comment = sanitize_text(data.get('comment', ''), max_length=1000)
+        
+        if not departure or not destination:
+            return jsonify({"error": "Départ et destination requis"}), 400
+        
+        # Dates
+        datetime_val = validate_datetime(data.get('datetime'))
+        return_datetime_val = None
+        if data.get('return_datetime'):
+            return_datetime_val = validate_datetime(data.get('return_datetime'))
+        
+        # Sièges
+        seats = validate_integer(data.get('seats', 1), min_val=1, max_val=8, field_name="seats")
+        seats_outbound = None
+        seats_return = None
+        if data.get('seats_outbound'):
+            seats_outbound = validate_integer(data.get('seats_outbound'), min_val=1, max_val=8, field_name="seats_outbound")
+        if data.get('seats_return'):
+            seats_return = validate_integer(data.get('seats_return'), min_val=1, max_val=8, field_name="seats_return")
+        
+        # Détours
+        max_detour_km = validate_integer(data.get('max_detour_km', 5), min_val=1, max_val=100, field_name="max_detour_km")
+        max_detour_time = validate_integer(data.get('max_detour_time', 25), min_val=1, max_val=120, field_name="max_detour_time")
+        
+    except ValueError as e:
+        logger.warning(f"Validation error in create_offer: {e}")
+        return jsonify({"error": str(e)}), 400
+    
+    # Whitelist stricte des colonnes autorisées
+    ALLOWED_COLUMNS = {
+        'user_id', 'departure', 'destination', 'datetime', 'seats', 'comment',
+        'details', 'accept_passengers_on_route', 'seats_outbound', 'seats_return',
+        'route_outbound', 'route_return', 'max_detour_km', 'max_detour_time',
+        'detour_zone_outbound', 'detour_zone_return', 'return_datetime',
+        'event_id', 'event_name', 'event_location', 'event_date', 'event_time',
+        'referring_site', 'page_url'
+    }
+    
+    try:
+        with sql.db_cursor() as cur:
+            # Préparer les données avec valeurs validées
+            offer_data = {
+                'user_id': user_id,
+                'departure': departure,
+                'destination': destination,
+                'datetime': datetime_val.isoformat(),
+                'seats': seats,
+                'comment': comment,
+                'details': json.dumps(data.get('details', {})),
+                'accept_passengers_on_route': bool(data.get('accept_passengers_on_route', True)),
+                'seats_outbound': seats_outbound,
+                'seats_return': seats_return,
+                'route_outbound': json.dumps(data.get('route_outbound')) if data.get('route_outbound') else None,
+                'route_return': json.dumps(data.get('route_return')) if data.get('route_return') else None,
+                'max_detour_km': max_detour_km,
+                'max_detour_time': max_detour_time,
+                'return_datetime': return_datetime_val.isoformat() if return_datetime_val else None,
+                'event_id': sanitize_text(data.get('event_id', ''), max_length=255),
+                'event_name': sanitize_text(data.get('event_name', ''), max_length=255),
+                'event_location': sanitize_text(data.get('event_location', ''), max_length=255),
+                'event_date': data.get('event_date'),
+                'event_time': sanitize_text(data.get('event_time', ''), max_length=50),
+                'referring_site': sanitize_text(data.get('referring_site', ''), max_length=255),
+                'page_url': sanitize_text(data.get('page_url', ''), max_length=500)
+            }
+            
+            # Calculer les zones de détour si routes fournies
+            if offer_data['route_outbound']:
+                route_out = json.loads(offer_data['route_outbound'])
+                if route_out and 'geometry' in route_out:
+                    coords = route_out['geometry'].get('coordinates', [])
+                    if coords:
+                        buffer_geojson = create_buffer_simple(coords, offer_data['max_detour_km'])
+                        offer_data['detour_zone_outbound'] = json.dumps(buffer_geojson) if buffer_geojson else None
+            
+            if offer_data['route_return']:
+                route_ret = json.loads(offer_data['route_return'])
+                if route_ret and 'geometry' in route_ret:
+                    coords = route_ret['geometry'].get('coordinates', [])
+                    if coords:
+                        buffer_geojson = create_buffer_simple(coords, offer_data['max_detour_km'])
+                        offer_data['detour_zone_return'] = json.dumps(buffer_geojson) if buffer_geojson else None
+            
+            # Filtrer avec whitelist avant insertion SQL
+            safe_data = {k: v for k, v in offer_data.items() if k in ALLOWED_COLUMNS}
+            columns = ', '.join(safe_data.keys())
+            placeholders = ', '.join(['%s'] * len(safe_data))
+            
+            cur.execute(
+                f"INSERT INTO carpool_offers ({columns}) VALUES ({placeholders})",
+                list(safe_data.values())
+            )
+            
+            offer_id = cur.lastrowid
+            
+        return jsonify({"success": True, "offer_id": offer_id}), 201
+    
+    except ValueError as e:
+        # Erreurs de validation attendues
+        logger.warning(f"Validation error in create_offer: {e}")
+        return jsonify({"error": str(e)}), 400
+    
+    except Exception as e:
+        # Erreurs inattendues - log détaillé, message générique
+        logger.error(f"Unexpected error in create_offer: {e}", exc_info=True)
+        return jsonify({"error": "Une erreur est survenue lors de la création de l'offre"}), 500
+
+
+@app.route("/api/carpool", methods=["GET"])
+@limiter.limit("30 per minute")
+def get_offers():
+    """Récupérer les offres de covoiturage avec filtres optionnels"""
+    try:
+        filters = {}
+        for key in ['event_id', 'user_id', 'departure', 'destination']:
+            val = request.args.get(key)
+            if val:
+                filters[key] = val
+        
+        with sql.db_cursor() as cur:
+            where_clauses = []
+            params = []
+            
+            for key, val in filters.items():
+                where_clauses.append(f"{key} = %s")
+                params.append(val)
+            
+            where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+            
+            cur.execute(f"""
+                SELECT * FROM carpool_offers 
+                {where_sql}
+                ORDER BY datetime DESC
+                LIMIT 100
+            """, params)
+            
+            offers = []
+            for row in cur.fetchall():
+                offer = dict(zip([d[0] for d in cur.description], row))
+                # Décoder les champs JSON
+                for json_field in ['details', 'route_outbound', 'route_return', 'detour_zone_outbound', 'detour_zone_return']:
+                    if offer.get(json_field):
+                        try:
+                            offer[json_field] = json.loads(offer[json_field])
+                        except:
+                            pass
+                offers.append(offer)
+        
+        return jsonify({"offers": offers})
+    
+    except Exception as e:
+        logger.error(f"Error fetching offers: {e}", exc_info=True)
+        return jsonify({"error": "Une erreur est survenue"}), 500
+
+
+@app.route('/api/carpool/<int:offer_id>', methods=['GET'])
+@limiter.limit("40 per minute")
+def get_offer(offer_id):
+    """Récupérer une offre spécifique avec ses réservations"""
+    try:
+        with sql.db_cursor() as cur:
+            cur.execute("SELECT * FROM carpool_offers WHERE id = %s", (offer_id,))
+            row = cur.fetchone()
+            
+            if not row:
+                return jsonify({"error": "Offre non trouvée"}), 404
+            
+            offer = dict(zip([d[0] for d in cur.description], row))
+            
+            # Décoder JSON
+            for json_field in ['details', 'route_outbound', 'route_return', 'detour_zone_outbound', 'detour_zone_return', 'current_route_geometry']:
+                if offer.get(json_field):
+                    try:
+                        offer[json_field] = json.loads(offer[json_field])
+                    except:
+                        pass
+            
+            # Récupérer les réservations
+            cur.execute("""
+                SELECT * FROM carpool_reservations 
+                WHERE offer_id = %s
+                ORDER BY created_at ASC
+            """, (offer_id,))
+            
+            reservations = []
+            for res_row in cur.fetchall():
+                res = dict(zip([d[0] for d in cur.description], res_row))
+                for json_field in ['meeting_point_coords', 'detour_route', 'pickup_coords', 'route_segment_geometry']:
+                    if res.get(json_field):
+                        try:
+                            res[json_field] = json.loads(res[json_field])
+                        except:
+                            pass
+                reservations.append(res)
+            
+            offer['reservations'] = reservations
+        
+        return jsonify(offer)
+    
+    except Exception as e:
+        logger.error(f"Error fetching offer {offer_id}: {e}", exc_info=True)
+        return jsonify({"error": "Une erreur est survenue"}), 500
+
+
+@app.route('/api/carpool/<int:offer_id>', methods=['DELETE'])
+@limiter.limit("10 per minute")
+def delete_offer(offer_id):
+    """Supprimer une offre (seulement par son créateur)"""
+    data = request.json
+    
+    if not data:
+        return jsonify({"error": "user_id requis"}), 400
+    
+    try:
+        user_id = validate_user_id(data.get('user_id'))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    
+    try:
+        with sql.db_cursor() as cur:
+            # Vérifier propriété
+            cur.execute("SELECT user_id FROM carpool_offers WHERE id = %s", (offer_id,))
+            row = cur.fetchone()
+            
+            if not row:
+                return jsonify({"error": "Offre non trouvée"}), 404
+            
+            if row[0] != user_id:
+                return jsonify({"error": "Non autorisé"}), 403
+            
+            # Suppression (cascade sur reservations)
+            cur.execute("DELETE FROM carpool_offers WHERE id = %s", (offer_id,))
+        
+        return jsonify({"success": True})
+    
+    except ValueError as e:
+        logger.warning(f"Validation error in delete_offer: {e}")
+        return jsonify({"error": str(e)}), 400
+    
+    except Exception as e:
+        logger.error(f"Unexpected error in delete_offer: {e}", exc_info=True)
+        return jsonify({"error": "Une erreur est survenue"}), 500
+
+
+@app.route('/api/carpool/reserve', methods=['POST'])
+@limiter.limit("20 per minute")
+def create_reservation():
+    """Créer une réservation pour une offre"""
+    data = request.json
+    
+    if not data:
+        return jsonify({"error": "Données requises"}), 400
+    
+    # Validation inputs
+    required = ['offer_id', 'passenger_user_id', 'trip_type']
+    if not all(k in data for k in required):
+        return jsonify({"error": f"Champs requis: {', '.join(required)}"}), 400
+    
+    try:
+        offer_id = validate_integer(data['offer_id'], min_val=1, field_name="offer_id")
+        passenger_user_id = validate_user_id(data['passenger_user_id'])
+        
+        trip_type = str(data['trip_type']).strip()
+        if trip_type not in ['outbound', 'return', 'both']:
+            raise ValueError("trip_type doit être 'outbound', 'return' ou 'both'")
+        
+        passengers = validate_integer(data.get('passengers', 1), min_val=1, max_val=8, field_name="passengers")
+        
+    except ValueError as e:
+        logger.warning(f"Validation error in create_reservation: {e}")
+        return jsonify({"error": str(e)}), 400
+    
+    try:
+        with sql.db_cursor() as cur:
+            # Vérifier que l'offre existe
+            cur.execute("SELECT id FROM carpool_offers WHERE id = %s", (offer_id,))
+            if not cur.fetchone():
+                return jsonify({"error": "Offre non trouvée"}), 404
+            
+            # Préparer données réservation
+            res_data = {
+                'offer_id': offer_id,
+                'passenger_user_id': passenger_user_id,
+                'passengers': passengers,
+                'trip_type': trip_type,
+                'meeting_point_coords': json.dumps(data.get('meeting_point_coords')) if data.get('meeting_point_coords') else None,
+                'meeting_point_address': sanitize_text(data.get('meeting_point_address', ''), max_length=500),
+                'detour_route': json.dumps(data.get('detour_route')) if data.get('detour_route') else None,
+                'status': data.get('status', 'pending')
+            }
+            
+            columns = ', '.join(res_data.keys())
+            placeholders = ', '.join(['%s'] * len(res_data))
+            
+            cur.execute(
+                f"INSERT INTO carpool_reservations ({columns}) VALUES ({placeholders})",
+                list(res_data.values())
+            )
+            
+            reservation_id = cur.lastrowid
+        
+        return jsonify({"success": True, "reservation_id": reservation_id}), 201
+    
+    except IntegrityError as e:
+        if 'uniq_user_offer_trip' in str(e):
+            return jsonify({"error": "Vous avez déjà une réservation pour ce trajet"}), 409
+        logger.error(f"Database integrity error in create_reservation: {e}")
+        return jsonify({"error": "Erreur d'intégrité des données"}), 500
+    
+    except ValueError as e:
+        logger.warning(f"Validation error in create_reservation: {e}")
+        return jsonify({"error": str(e)}), 400
+    
+    except Exception as e:
+        logger.error(f"Unexpected error in create_reservation: {e}", exc_info=True)
+        return jsonify({"error": "Une erreur est survenue"}), 500
+
+
+@app.route('/api/carpool/reservations', methods=['GET'])
+def get_my_reservations():
+    """Récupérer les réservations d'un utilisateur"""
+    user_id = request.args.get('user_id')
+    
+    if not user_id:
+        return jsonify({"error": "user_id requis"}), 400
+    
+    try:
+        user_id = validate_user_id(user_id)
+        with sql.db_cursor() as cur:
+            cur.execute("""
+                SELECT r.*, o.departure, o.destination, o.datetime, o.user_id as driver_user_id
+                FROM carpool_reservations r
+                JOIN carpool_offers o ON r.offer_id = o.id
+                WHERE r.passenger_user_id = %s
+                ORDER BY o.datetime DESC
+            """, (user_id,))
+            
+            reservations = []
+            for row in cur.fetchall():
+                res = dict(zip([d[0] for d in cur.description], row))
+                for json_field in ['meeting_point_coords', 'detour_route', 'pickup_coords', 'route_segment_geometry']:
+                    if res.get(json_field):
+                        try:
+                            res[json_field] = json.loads(res[json_field])
+                        except:
+                            pass
+                reservations.append(res)
+        
+        return jsonify({"reservations": reservations})
+    
+    except ValueError as e:
+        logger.warning(f"Validation error in get_my_reservations: {e}")
+        return jsonify({"error": str(e)}), 400
+    
+    except Exception as e:
+        logger.error(f"Error fetching reservations: {e}", exc_info=True)
+        return jsonify({"error": "Une erreur est survenue"}), 500
+
+
+@app.route('/api/carpool/search', methods=['GET'])
+@limiter.limit("60 per minute")
+def search_offers():
+    """
+    Recherche spatiale d'offres compatibles avec un trajet passager ou un point + rayon
+    
+    Deux modes:
+    1. Recherche par trajet: start_lon, start_lat, end_lon, end_lat
+    2. Recherche par rayon: lon, lat, radius
+    """
+    try:
+        # Mode 1: Recherche par rayon (point + radius)
+        if request.args.get('lon') and request.args.get('lat') and request.args.get('radius'):
+            lon = float(request.args.get('lon'))
+            lat = float(request.args.get('lat'))
+            radius = float(request.args.get('radius'))
+            
+            # Validation
+            if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+                return jsonify({"error": "Coordonnées invalides"}), 400
+            
+            if radius <= 0 or radius > 200000:  # Max 200km
+                return jsonify({"error": "Radius doit être entre 0 et 200000 mètres"}), 400
+            
+            # Chercher dans les deux tables (v1 et v2)
+            offers = []
+            
+            # Fonction helper pour calculer la distance
+            def haversine_distance(lon1, lat1, lon2, lat2):
+                """Distance en mètres entre deux points"""
+                import math
+                R = 6371000  # Rayon de la Terre en mètres
+                phi1 = math.radians(lat1)
+                phi2 = math.radians(lat2)
+                delta_phi = math.radians(lat2 - lat1)
+                delta_lambda = math.radians(lon2 - lon1)
+                
+                a = math.sin(delta_phi/2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda/2)**2
+                c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+                
+                return R * c
+            
+            # Table v1
+            with sql.db_cursor() as cur:
+                cur.execute("""
+                    SELECT * FROM carpool_offers
+                    WHERE datetime >= NOW() - INTERVAL 2 DAY
+                    ORDER BY datetime DESC
+                    LIMIT 100
+                """)
+                
+                for row in cur.fetchall():
+                    offer = dict(zip([d[0] for d in cur.description], row))
+                    
+                    # Décoder les champs JSON
+                    for json_field in ['details', 'route_outbound', 'route_return', 'detour_zone_outbound', 'detour_zone_return']:
+                        if offer.get(json_field):
+                            try:
+                                offer[json_field] = json.loads(offer[json_field])
+                            except Exception as e:
+                                logging.error(f"Failed to parse {json_field}: {e}, value type: {type(offer.get(json_field))}")
+                                # If it failed, ensure it's at least an empty dict
+                                if json_field == "details" and isinstance(offer.get(json_field), str):
+                                    offer[json_field] = {}
+                    
+                    # Filtrer par rayon : vérifier si le départ ou l'arrivée est dans le rayon
+                    details = offer.get('details', {})
+                    from_coords = details.get('fromCoords', [])
+                    to_coords = details.get('toCoords', [])
+                    
+                    in_radius = False
+                    if len(from_coords) == 2:
+                        dist = haversine_distance(lon, lat, from_coords[0], from_coords[1])
+                        if dist <= radius:
+                            in_radius = True
+                    
+                    if not in_radius and len(to_coords) == 2:
+                        dist = haversine_distance(lon, lat, to_coords[0], to_coords[1])
+                        if dist <= radius:
+                            in_radius = True
+                    
+                    # Vérifier aussi les stops
+                    if not in_radius:
+                        stops = details.get('stops', [])
+                        for stop in stops:
+                            stop_coords = stop.get('coords', [])
+                            if len(stop_coords) == 2:
+                                dist = haversine_distance(lon, lat, stop_coords[0], stop_coords[1])
+                                if dist <= radius:
+                                    in_radius = True
+                                    break
+                    
+                    if in_radius:
+                        offers.append(offer)
+            
+            # Table v2 si disponible
+            if V2_ENABLED:
+                try:
+                    with db_cursor_v2() as cur:
+                        cur.execute("""
+                            SELECT * FROM carpool_offers
+                            WHERE datetime >= NOW() - INTERVAL 2 DAY
+                            ORDER BY datetime DESC
+                            LIMIT 100
+                        """)
+                        
+                        for row in cur.fetchall():
+                            offer = dict(zip([d[0] for d in cur.description], row))
+                            
+                            # Décoder les champs JSON
+                            for json_field in ['details', 'route_outbound', 'route_return', 'detour_zone_outbound', 'detour_zone_return']:
+                                if offer.get(json_field):
+                                    try:
+                                        offer[json_field] = json.loads(offer[json_field])
+                                    except:
+                                        pass
+                            
+                            # Filtrer par rayon
+                            details = offer.get('details', {})
+                            from_coords = details.get('fromCoords', [])
+                            to_coords = details.get('toCoords', [])
+                            
+                            # Pour v2, utiliser departure_coords et destination_coords si details est vide
+                            if not from_coords and offer.get('departure_coords'):
+                                dep_coords = offer['departure_coords']
+                                if isinstance(dep_coords, str):
+                                    import json
+                                    dep_coords = json.loads(dep_coords)
+                                from_coords = [dep_coords.get('lon'), dep_coords.get('lat')]
+                            
+                            if not to_coords and offer.get('destination_coords'):
+                                dest_coords = offer['destination_coords']
+                                if isinstance(dest_coords, str):
+                                    import json
+                                    dest_coords = json.loads(dest_coords)
+                                to_coords = [dest_coords.get('lon'), dest_coords.get('lat')]
+                            
+                            logger.info(f"  Offre {offer.get('id')}: from_coords={from_coords}, to_coords={to_coords}")
+                            
+                            in_radius = False
+                            if len(from_coords) == 2:
+                                dist = haversine_distance(lon, lat, from_coords[0], from_coords[1])
+                                logger.info(f"    Distance au départ: {dist/1000:.1f} km")
+                                if dist <= radius:
+                                    in_radius = True
+                            
+                            if not in_radius and len(to_coords) == 2:
+                                dist = haversine_distance(lon, lat, to_coords[0], to_coords[1])
+                                logger.info(f"    Distance à l'arrivée: {dist/1000:.1f} km")
+                                if dist <= radius:
+                                    in_radius = True
+                            
+                            # Vérifier aussi les stops
+                            if not in_radius:
+                                stops = details.get('stops', [])
+                                for stop in stops:
+                                    stop_coords = stop.get('coords', [])
+                                    if len(stop_coords) == 2:
+                                        dist = haversine_distance(lon, lat, stop_coords[0], stop_coords[1])
+                                        if dist <= radius:
+                                            in_radius = True
+                                            break
+                            
+                            if in_radius:
+                                offers.append(offer)
+                except Exception as e:
+                    logger.warning(f"Could not fetch from v2 table: {e}")
+            
+            logger.info(f"🔍 Recherche par rayon: {len(offers)} offres trouvées autour de ({lon}, {lat}) rayon {radius}m")
+            return jsonify(offers)
+        
+        # Mode 2: Recherche par trajet (ancienne logique)
+        start_lon = request.args.get('start_lon', 0)
+        start_lat = request.args.get('start_lat', 0)
+        end_lon = request.args.get('end_lon', 0)
+        end_lat = request.args.get('end_lat', 0)
+        
+        # Validation coordonnées
+        start_lon, start_lat = validate_coordinates(start_lon, start_lat)
+        end_lon, end_lat = validate_coordinates(end_lon, end_lat)
+        
+        date_str = request.args.get('date', '')
+        trip_type = request.args.get('trip_type', 'outbound')
+        
+        if not all([start_lon, start_lat, end_lon, end_lat]):
+            return jsonify({"error": "Coordonnées start/end requises"}), 400
+        
+        # Chercher offres du jour (±12h)
+        with sql.db_cursor() as cur:
+            date_filter = ""
+            params = []
+            
+            if date_str:
+                try:
+                    target_date = datetime.fromisoformat(date_str)
+                    date_min = target_date - timedelta(hours=12)
+                    date_max = target_date + timedelta(hours=12)
+                    date_filter = "AND datetime BETWEEN %s AND %s"
+                    params = [date_min, date_max]
+                except:
+                    pass
+            
+            cur.execute(f"""
+                SELECT * FROM carpool_offers
+                WHERE accept_passengers_on_route = TRUE
+                {date_filter}
+                ORDER BY datetime ASC
+                LIMIT 50
+            """, params)
+            
+            matching_offers = []
+            
+            for row in cur.fetchall():
+                offer = dict(zip([d[0] for d in cur.description], row))
+                
+                # Décoder zones de détour
+                zone_field = 'detour_zone_outbound' if trip_type == 'outbound' else 'detour_zone_return'
+                if offer.get(zone_field):
+                    try:
+                        zone = json.loads(offer[zone_field])
+                        
+                        # Vérifier si les points passager sont dans la zone
+                        # (simplification: vérifier au moins un point)
+                        # TODO: implémenter point_in_polygon proprement
+                        
+                        matching_offers.append(offer)
+                    except:
+                        pass
+        
+        return jsonify({"offers": matching_offers[:20]})  # Limiter à 20 résultats
+    
+    except ValueError as e:
+        logger.warning(f"Validation error in search_offers: {e}")
+        return jsonify({"error": str(e)}), 400
+    
+    except Exception as e:
+        logger.error(f"Error searching offers: {e}", exc_info=True)
+        return jsonify({"error": "Erreur serveur"}), 500
+
+
+# ============================================
+# ENDPOINTS API V2 - Sans comptes utilisateurs
+# ============================================
+
+@app.route('/api/v2/offers', methods=['POST'])
+@limiter.limit("10 per hour")
+def create_offer_v2():
+    """Créer une offre de covoiturage (workflow email/WhatsApp)"""
+    if not V2_ENABLED:
+        return jsonify({'error': 'API v2 non disponible'}), 503
+    
+    try:
+        data = request.json
+        
+        # Validation
+        driver_email = validate_email(data.get('driver_email'))
+        driver_name = sanitize_text(data.get('driver_name', ''), max_length=100)
+        driver_phone = sanitize_text(data.get('driver_phone', ''), max_length=20)
+        
+        departure = sanitize_text(data.get('departure'), max_length=255)
+        destination = sanitize_text(data.get('destination'), max_length=255)
+        
+        # Parse datetime (sans validation stricte du passé car peut y avoir décalage horaire)
+        datetime_str = data.get('datetime')
+        if not datetime_str:
+            return jsonify({'error': 'Date/heure requise'}), 400
+        
+        # Validation basique du format
+        try:
+            dt = datetime.strptime(datetime_str, '%Y-%m-%d %H:%M:%S')
+            # Vérifier que la date n'est pas trop vieille (> 48h dans le passé)
+            if dt < datetime.now() - timedelta(hours=48):
+                return jsonify({'error': 'La date du trajet est trop ancienne (maximum 48h dans le passé)'}), 400
+            # Garder datetime_str comme string pour l'insertion SQL
+        except ValueError:
+            return jsonify({'error': 'Format de date invalide (utilisez YYYY-MM-DD HH:MM:SS)'}), 400
+        
+        seats = validate_integer(data.get('seats', 1), min_val=1, max_val=8)
+        
+        if not all([driver_email, driver_phone, departure, destination, datetime_str]):
+            return jsonify({'error': 'Champs obligatoires manquants'}), 400
+        
+        # Coordonnées (optionnel - extraire depuis details si présent)
+        details = data.get('details', {})
+        departure_coords = None
+        destination_coords = None
+        
+        if details.get('fromCoords'):
+            coords = details['fromCoords']
+            departure_coords = json.dumps({'lat': coords[1], 'lon': coords[0]})
+        
+        if details.get('toCoords'):
+            coords = details['toCoords']
+            destination_coords = json.dumps({'lat': coords[1], 'lon': coords[0]})
+        
+        # Événement (optionnel)
+        event_id = sanitize_text(data.get('event_id', ''), max_length=255)
+        event_name = sanitize_text(data.get('event_name', ''), max_length=255)
+        event_location = sanitize_text(data.get('event_location', ''), max_length=255)
+        event_date = data.get('event_date')
+        
+        # Sérialiser details en JSON
+        details_json = json.dumps(details) if details else None
+        
+        # Date d'expiration (7 jours après le trajet)
+        expires_at = (datetime.strptime(datetime_str, '%Y-%m-%d %H:%M:%S') + timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Insertion BDD
+        with db_cursor_v2() as cur:
+            cur.execute("""
+                INSERT INTO carpool_offers 
+                (driver_email, driver_name, driver_phone, departure, destination, 
+                 departure_coords, destination_coords, datetime, seats_available, 
+                 event_id, event_name, event_location, event_date, details, expires_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                driver_email, driver_name, driver_phone, departure, destination,
+                departure_coords, destination_coords, datetime_str, seats,
+                event_id, event_name, event_location, event_date, details_json, expires_at
+            ))
+            offer_id = cur.lastrowid
+        
+        logger.info(f"✅ Offre v2 créée: {offer_id} par {driver_email}")
+        
+        # TODO: Envoyer email de confirmation au conducteur
+        try:
+            # email_offer_confirmation(driver_email, driver_name, offer_id, departure, destination)
+            pass
+        except Exception as e:
+            logger.warning(f"Email confirmation failed: {e}")
+        
+        return jsonify({
+            'success': True,
+            'offer_id': offer_id,
+            'message': 'Offre créée avec succès. Vous recevrez un email pour chaque réservation.'
+        }), 201
+        
+    except ValueError as e:
+        logger.warning(f"Validation error: {e}")
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error creating offer v2: {e}", exc_info=True)
+        return jsonify({'error': 'Erreur serveur'}), 500
+
+
+@app.route('/api/v2/offers', methods=['GET'])
+@limiter.limit("60 per minute")
+def get_offers_v2():
+    """Récupérer les offres de covoiturage disponibles"""
+    if not V2_ENABLED:
+        return jsonify({'error': 'API v2 non disponible'}), 503
+    
+    try:
+        # Filtres optionnels
+        event_id = request.args.get('event_id')
+        min_seats = request.args.get('min_seats', type=int)
+        
+        # Query de base - offres non expirées
+        query = """
+            SELECT id, driver_email, driver_name, driver_phone,
+                   departure, destination, departure_coords, destination_coords,
+                   datetime, seats_available, 
+                   event_id, event_name, event_location, event_date,
+                   details, created_at
+            FROM carpool_offers
+            WHERE expires_at > NOW()
+            AND seats_available > 0
+        """
+        params = []
+        
+        if event_id:
+            query += " AND event_id = %s"
+            params.append(event_id)
+        
+        if min_seats:
+            query += " AND seats_available >= %s"
+            params.append(min_seats)
+        
+        query += " ORDER BY datetime ASC LIMIT 100"
+        
+        with db_cursor_v2() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+        
+        offers = []
+        for row in rows:
+            # Masquer les données sensibles (téléphone/email complet)
+            masked_email = row['driver_email'].split('@')[0][:3] + '***@' + row['driver_email'].split('@')[1]
+            masked_phone = row['driver_phone'][:4] + '****' if row['driver_phone'] else None
+            
+            offers.append({
+                'id': row['id'],
+                'driver_name': row['driver_name'],
+                'driver_email_masked': masked_email,
+                'driver_phone_masked': masked_phone,
+                'departure': row['departure'],
+                'destination': row['destination'],
+                'departure_coords': json.loads(row['departure_coords']) if row['departure_coords'] else None,
+                'destination_coords': json.loads(row['destination_coords']) if row['destination_coords'] else None,
+                'datetime': row['datetime'].strftime('%Y-%m-%d %H:%M:%S') if row['datetime'] else None,
+                'seats_available': row['seats_available'],
+                'event_id': row['event_id'],
+                'event_name': row['event_name'],
+                'event_location': row['event_location'],
+                'event_date': row['event_date'].strftime('%Y-%m-%d') if row['event_date'] else None,
+                'details': json.loads(row['details']) if row['details'] else {},
+                'created_at': row['created_at'].strftime('%Y-%m-%d %H:%M:%S') if row['created_at'] else None
+            })
+        
+        return jsonify({'offers': offers, 'count': len(offers)}), 200
+        
+    except Exception as e:
+        logger.error(f"Error fetching offers v2: {e}", exc_info=True)
+        return jsonify({'error': 'Erreur serveur'}), 500
+
+
+@app.route('/api/v2/reservations', methods=['POST'])
+@limiter.limit("10 per hour")
+def create_reservation_v2():
+    """Créer une réservation (avec paiement 1€)"""
+    if not V2_ENABLED:
+        return jsonify({'error': 'API v2 non disponible'}), 503
+    
+    try:
+        data = request.json
+        
+        # Validation
+        offer_id = validate_integer(data.get('offer_id'), min_val=1)
+        passenger_email = validate_email(data.get('passenger_email'))
+        passenger_name = sanitize_text(data.get('passenger_name', ''), max_length=100)
+        passenger_phone = sanitize_text(data.get('passenger_phone', ''), max_length=20)
+        passengers_count = validate_integer(data.get('passengers', 1), min_val=1, max_val=8)
+        
+        if not all([offer_id, passenger_email, passenger_phone]):
+            return jsonify({'error': 'Champs obligatoires manquants'}), 400
+        
+        # Vérifier disponibilité de l'offre
+        with db_cursor_v2() as cur:
+            cur.execute("""
+                SELECT id, driver_email, driver_name, driver_phone, 
+                       departure, destination, datetime, seats_available,
+                       event_name, event_location, event_date
+                FROM carpool_offers
+                WHERE id = %s AND expires_at > NOW()
+            """, (offer_id,))
+            offer = cur.fetchone()
+        
+        if not offer:
+            return jsonify({'error': 'Offre introuvable ou expirée'}), 404
+        
+        if offer['seats_available'] < passengers_count:
+            return jsonify({'error': f"Seulement {offer['seats_available']} place(s) disponible(s)"}), 400
+        
+        # Générer token de confirmation
+        token = generate_confirmation_token()
+        
+        # Insérer réservation
+        with db_cursor_v2() as cur:
+            cur.execute("""
+                INSERT INTO carpool_reservations
+                (offer_id, passenger_email, passenger_name, passenger_phone, 
+                 passengers_count, status, confirmation_token)
+                VALUES (%s, %s, %s, %s, %s, 'pending', %s)
+            """, (
+                offer_id, passenger_email, passenger_name, passenger_phone,
+                passengers_count, token
+            ))
+            reservation_id = cur.lastrowid
+            
+            # Décrémenter les places disponibles
+            cur.execute("""
+                UPDATE carpool_offers
+                SET seats_available = seats_available - %s
+                WHERE id = %s
+            """, (passengers_count, offer_id))
+        
+        logger.info(f"✅ Réservation v2 créée: {reservation_id} pour offre {offer_id}")
+        
+        # Envoyer emails
+        try:
+            # Email au conducteur avec bouton WhatsApp vers le passager
+            email_new_reservation_to_driver(
+                driver_email=offer['driver_email'],
+                driver_name=offer['driver_name'],
+                passenger_name=passenger_name,
+                passenger_phone=passenger_phone,
+                departure=offer['departure'],
+                destination=offer['destination'],
+                datetime_str=offer['datetime'].strftime('%Y-%m-%d %H:%M') if offer['datetime'] else '',
+                passengers_count=passengers_count,
+                event_name=offer['event_name']
+            )
+            
+            # Email au passager avec bouton WhatsApp vers le conducteur
+            email_reservation_confirmed_to_passenger(
+                passenger_email=passenger_email,
+                passenger_name=passenger_name,
+                driver_name=offer['driver_name'],
+                driver_phone=offer['driver_phone'],
+                departure=offer['departure'],
+                destination=offer['destination'],
+                datetime_str=offer['datetime'].strftime('%Y-%m-%d %H:%M') if offer['datetime'] else '',
+                event_name=offer['event_name']
+            )
+            
+        except Exception as e:
+            logger.error(f"Email sending failed: {e}", exc_info=True)
+        
+        return jsonify({
+            'success': True,
+            'reservation_id': reservation_id,
+            'message': 'Réservation confirmée ! Vous allez recevoir un email avec les coordonnées du conducteur.'
+        }), 201
+        
+    except ValueError as e:
+        logger.warning(f"Validation error: {e}")
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        logger.error(f"Error creating reservation v2: {e}", exc_info=True)
+        return jsonify({'error': 'Erreur serveur'}), 500
+
+
+@app.route('/api/carpool/calculate-pickup', methods=['POST'])
+@limiter.limit("60 per minute")
+def calculate_pickup_times():
+    """
+    Calcule l'heure de pickup et le prix pour un point de recherche donné
+    par rapport aux routes d'une offre.
+    
+    Body JSON:
+    {
+        "offer_id": 123,
+        "search_point": [lon, lat],
+        "trip_type": "outbound" ou "return"
+    }
+    
+    Returns:
+    {
+        "pickup_time": "2025-12-20 15:30:00",
+        "pickup_distance_km": 2.5,
+        "segment_price": 8.5,
+        "detour_time_minutes": 5
+    }
+    """
+    try:
+        data = request.json
+        offer_id = data.get('offer_id')
+        search_point = data.get('search_point')  # [lon, lat]
+        trip_type = data.get('trip_type', 'outbound')
+        
+        if not offer_id or not search_point:
+            return jsonify({'error': 'Missing offer_id or search_point'}), 400
+        
+        # Récupérer l'offre
+        with sql.db_cursor() as cur:
+            # Essayer d'abord la table v2
+            cur.execute("SELECT * FROM carpool_offers WHERE id = %s", (offer_id,))
+            offer = cur.fetchone()
+            
+            if not offer:
+                # Fallback sur la table v1
+                cur.execute("SELECT * FROM carpool_offers WHERE id = %s", (offer_id,))
+                offer = cur.fetchone()
+            
+            if not offer:
+                return jsonify({'error': 'Offer not found'}), 404
+            
+            offer_dict = dict(zip([d[0] for d in cur.description], offer))
+        
+        # Décoder la route selon le type de trajet
+        route_field = 'route_outbound' if trip_type == 'outbound' else 'route_return'
+        route_json = offer_dict.get(route_field)
+        
+        if not route_json:
+            return jsonify({'error': f'No {trip_type} route available'}), 404
+        
+        route_data = json.loads(route_json) if isinstance(route_json, str) else route_json
+        route_coords = route_data.get('geometry', {}).get('coordinates', [])
+        
+        if not route_coords or len(route_coords) < 2:
+            return jsonify({'error': 'Invalid route data'}), 400
+        
+        # Point de départ et d'arrivée
+        start_point = tuple(route_coords[0])
+        end_point = tuple(route_coords[-1])
+        search_tuple = tuple(search_point)
+        
+        # Calculer le temps de détour pour aller chercher le passager
+        detour_time = calculate_detour_time_osrm(start_point, search_tuple, end_point)
+        
+        if detour_time is None:
+            return jsonify({'error': 'Could not calculate route timing'}), 500
+        
+        # Calculer la route du point de pickup à la destination
+        pickup_to_dest_url = f"https://router.project-osrm.org/route/v1/driving/{search_point[0]},{search_point[1]};{end_point[0]},{end_point[1]}?overview=false"
+        
+        try:
+            resp = requests.get(pickup_to_dest_url, timeout=5)
+            if resp.ok:
+                route_info = resp.json()
+                if route_info.get('code') == 'Ok' and route_info.get('routes'):
+                    segment_distance_m = route_info['routes'][0]['distance']
+                    segment_duration_s = route_info['routes'][0]['duration']
+                    segment_distance_km = segment_distance_m / 1000
+                else:
+                    return jsonify({'error': 'Could not calculate segment route'}), 500
+            else:
+                return jsonify({'error': 'OSRM routing failed'}), 500
+        except Exception as e:
+            logger.error(f"Error calculating segment route: {e}")
+            return jsonify({'error': 'Routing service error'}), 500
+        
+        # Calculer le prix du segment (0.10€/km base)
+        base_price_per_km = 0.10
+        segment_price = round(segment_distance_km * base_price_per_km * 2) / 2  # Arrondi à 0.50€
+        
+        # Calculer l'heure de pickup
+        # Heure de départ de l'offre
+        departure_time_str = offer_dict.get('datetime')
+        if not departure_time_str:
+            return jsonify({'error': 'No departure time in offer'}), 400
+        
+        departure_dt = datetime.strptime(str(departure_time_str), '%Y-%m-%d %H:%M:%S')
+        
+        # Temps pour aller du départ au point de pickup (approximation: detour_time / 2)
+        # Plus précis: calculer la route start -> search_point
+        start_to_pickup_url = f"https://router.project-osrm.org/route/v1/driving/{start_point[0]},{start_point[1]};{search_point[0]},{search_point[1]}?overview=false"
+        
+        try:
+            resp = requests.get(start_to_pickup_url, timeout=5)
+            if resp.ok:
+                route_info = resp.json()
+                if route_info.get('code') == 'Ok' and route_info.get('routes'):
+                    time_to_pickup_s = route_info['routes'][0]['duration']
+                    time_to_pickup_min = time_to_pickup_s / 60
+                else:
+                    # Fallback: utiliser detour_time / 2
+                    time_to_pickup_min = detour_time / 2
+            else:
+                time_to_pickup_min = detour_time / 2
+        except:
+            time_to_pickup_min = detour_time / 2
+        
+        # Heure de pickup = heure de départ + temps pour arriver au pickup
+        pickup_dt = departure_dt + timedelta(minutes=time_to_pickup_min)
+        pickup_time_str = pickup_dt.strftime('%Y-%m-%d %H:%M:%S')
+        
+        return jsonify({
+            'pickup_time': pickup_time_str,
+            'pickup_distance_km': round(segment_distance_km, 1),
+            'segment_price': segment_price,
+            'detour_time_minutes': round(detour_time, 1)
+        })
+    
+    except Exception as e:
+        logger.error(f"Error in calculate_pickup_times: {e}", exc_info=True)
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+if __name__ == '__main__':
+    # Initialiser les tables au démarrage
+    try:
+        from init_carpool_tables import init_carpool_tables
+        init_carpool_tables()
+    except Exception as e:
+        print(f"⚠️ Warning: Could not init tables: {e}")
+    
+    # Initialiser les tables v2 si activées
+    if V2_ENABLED:
+        try:
+            # Les tables sont déjà initialisées par init_carpool_tables au démarrage
+            print("✅ Tables v2 (maintenant tables principales) déjà initialisées")
+        except Exception as e:
+            print(f"⚠️ Warning: Could not init v2 tables: {e}")
+    
+    app.run(host='0.0.0.0', port=9000, debug=True)
+
+
+# ============================================
+# ENDPOINTS GEOCODAGE (Autocomplétion adresses)
+# ============================================
+
+@app.route('/api/geocode/search', methods=['GET'])
+@limiter.limit("60 per minute")
+def search_geocode():
+    """Proxy pour recherche d'adresse (BAN puis Nominatim en fallback)"""
+    from urllib.parse import quote as url_quote
+    
+    query = request.args.get('q', '').strip()
+    limit = request.args.get('limit', '5')
+    
+    if not query:
+        return jsonify({'error': 'paramètre q requis'}), 400
+    
+    # Validation de la limite
+    try:
+        limit_int = validate_integer(limit, min_val=1, max_val=20, field_name="limit")
+        limit = str(limit_int)
+    except ValueError:
+        limit = '5'
+    
+    try:
+        # API BAN (Base Adresse Nationale - France)
+        ban_url = f"https://api-adresse.data.gouv.fr/search/?q={url_quote(query)}&limit={limit}"
+        ban_resp = requests.get(ban_url, timeout=10)
+        
+        if ban_resp.status_code == 200:
+            ban_data = ban_resp.json()
+            if ban_data.get('features'):
+                best_score = max((f.get('properties', {}).get('score', 0) for f in ban_data['features']), default=0)
+                
+                if best_score > 0.5:
+                    # Formater résultats BAN
+                    ban_features = []
+                    for feature in ban_data['features']:
+                        props = feature.get('properties', {})
+                        coords = feature.get('geometry', {}).get('coordinates', [])
+                        ban_features.append({
+                            'label': props.get('label', ''),
+                            'name': props.get('name', ''),
+                            'postcode': props.get('postcode', ''),
+                            'city': props.get('city', ''),
+                            'context': props.get('context', ''),
+                            'type': props.get('type', ''),
+                            'score': props.get('score', 0),
+                            'lon': coords[0] if len(coords) > 0 else None,
+                            'lat': coords[1] if len(coords) > 1 else None
+                        })
+                    return jsonify({'features': ban_features, 'source': 'ban'})
+        
+        # Fallback Nominatim (couverture mondiale)
+        nom_url = f"https://nominatim.openstreetmap.org/search?format=json&q={url_quote(query)}&limit={limit}&addressdetails=1"
+        nom_headers = {'User-Agent': 'Carette-Carpool-Widget/1.0'}
+        nom_resp = requests.get(nom_url, headers=nom_headers, timeout=10)
+        
+        if nom_resp.status_code == 200:
+            nom_data = nom_resp.json()
+            nom_features = []
+            for item in nom_data:
+                nom_features.append({
+                    'label': item.get('display_name', ''),
+                    'name': item.get('name', ''),
+                    'type': item.get('type', ''),
+                    'lon': float(item.get('lon', 0)),
+                    'lat': float(item.get('lat', 0))
+                })
+            return jsonify({'features': nom_features, 'source': 'nominatim'})
+        
+        return jsonify({'features': [], 'source': 'none'})
+        
+    except Exception as e:
+        logger.error(f"Error in search_geocode: {str(e)}")
+        if app.debug:
+            return jsonify({"error": str(e)}), 500
+        else:
+            return jsonify({"error": "Erreur serveur"}), 500
+
+
+@app.route('/api/geocode/reverse', methods=['GET'])
+@limiter.limit("60 per minute")
+def reverse_geocode():
+    """Géocodage inversé (coordonnées -> adresse)"""
+    lat = request.args.get('lat')
+    lon = request.args.get('lon')
+    
+    if not lat or not lon:
+        return jsonify({'error': 'lat et lon requis'}), 400
+    
+    try:
+        # Validation des coordonnées
+        lon, lat = validate_coordinates(lon, lat)
+        
+        # Nominatim reverse geocoding
+        url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}"
+        headers = {'User-Agent': 'Carette-Carpool-Widget/1.0'}
+        resp = requests.get(url, headers=headers, timeout=10)
+        
+        if resp.status_code == 200:
+            return jsonify(resp.json())
+        else:
+            return jsonify({'error': 'Géocodage inversé échoué'}), 500
+    
+    except ValueError as e:
+        logger.warning(f"Validation error in reverse_geocode: {e}")
+        return jsonify({"error": str(e)}), 400
+            
+    except Exception as e:
+        logger.error(f"Error in reverse_geocode: {str(e)}", exc_info=True)
+        if app.debug:
+            return jsonify({"error": str(e)}), 500
+        else:
+            return jsonify({"error": "Erreur serveur"}), 500

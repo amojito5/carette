@@ -23,6 +23,26 @@ Carette est un système complet de covoiturage conçu pour être facilement int�
 
 ## 🚀 Installation rapide
 
+### ⚠️ IMPORTANT - Sécurité
+
+**AVANT de démarrer, configurez la sécurité:**
+
+```bash
+# 1. Générer les secrets
+python3 generate_secrets.py
+
+# 2. Créer le fichier .env avec vos secrets
+cp .env.example .env
+nano .env  # Remplir avec les secrets générés
+
+# 3. Vérifier que .env est dans .gitignore
+cat .gitignore | grep ".env"
+```
+
+**📖 Voir `SECURITY_GUIDE.md` pour la configuration complète**
+
+---
+
 ### 1. Backend (Python/Flask)
 
 ```bash
@@ -31,10 +51,10 @@ cd backend
 # Installer les dépendances
 pip install -r requirements.txt
 
-# Configurer la base de données (optionnel, variables d'environnement)
-export CARETTE_DB_NAME=carette_db
-export CARETTE_DB_USER=carette_user
-export CARETTE_DB_PASSWORD=VotreMotDePasse
+# ⚠️ OBLIGATOIRE: Créer .env avec vos secrets
+# Ne PAS utiliser les valeurs par défaut !
+cp ../.env.example ../.env
+nano ../.env  # Remplir CARETTE_DB_PASSWORD et autres secrets
 
 # Initialiser la base
 python sql.py

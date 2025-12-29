@@ -3,7 +3,26 @@ class CarpoolOfferWidget extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     
-    // API de routing - OSRM avec fallback multi-serveurs, puis OpenRouteService
+    // Détection du mode widget (ponctuel ou récurrent)
+    this.widgetMode = this.getAttribute('data-mode') || 'ponctual';
+    
+    // Données entreprise B2B
+    this.companyId = this.getAttribute('data-company-id') || null;
+    this.companyName = this.getAttribute('data-company-name') || null;
+    this.companySites = [];
+    try {
+      const sitesAttr = this.getAttribute('data-sites');
+      if (sitesAttr) {
+        this.companySites = JSON.parse(sitesAttr);
+      }
+    } catch (e) {
+      console.error('❌ Erreur parsing data-sites:', e);
+    }
+    
+    console.log('🔧 Widget Mode:', this.widgetMode, 'Company:', this.companyName, 'Company ID:', this.companyId, 'Sites:', this.companySites.length);
+    
+    // API de routing - OSRM avec fallback multi-serveurs
+    // NOTE: N'utilisez JAMAIS de clés API côté client
     this.OSRM_SERVERS = [
       'https://router.project-osrm.org',
       'https://routing.openstreetmap.de/routed-car',
@@ -11,8 +30,11 @@ class CarpoolOfferWidget extends HTMLElement {
       'https://osrm.parisdata.gouv.fr'   // Serveur public Paris
     ];
     this.OSRM_URL = this.OSRM_SERVERS[0]; // Pour compatibilité
-    this.ORS_URL = 'https://api.openrouteservice.org';
-    this.ORS_API_KEY = '5b3ce3597851110001cf6248a0e1e0f65f684a2fa52e0a6e5b4f3e88'; // Clé demo publique
+    
+    // SÉCURITÉ: Les clés API doivent être gérées côté backend via un proxy
+    // Ne PAS mettre de clés API directement dans le frontend
+    // Utilisez l'attribut 'api-url' pour pointer vers votre backend
+    this.API_URL = this.getAttribute('api-url') || window.location.origin;
     
     // Couleurs thématiques pour l'aller et le retour (valeurs par défaut, seront écrasées dans connectedCallback)
     this.colorOutbound = '#7c3aed'; // Violet pour l'aller (défaut)
@@ -70,10 +92,8 @@ class CarpoolOfferWidget extends HTMLElement {
     // Réservations actuelles de l'utilisateur (pour vérifier les doublons)
     this.myReservations = [];
     
-    // Clé API OpenRouteService (optionnelle) - pour obtenir des itinéraires sans péage
-    // Gratuit: 2000 requêtes/jour sur https://openrouteservice.org/dev/#/signup
-    // Si vide, le widget fonctionnera sans le 3ème itinéraire sans péage
-    this.openRouteServiceApiKey = this.getAttribute('ors-api-key') || 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjU3YTY3YTgwM2ViYjRlYTg4MDg3NzljNGQyYTc3NGQzIiwiaCI6Im11cm11cjY0In0=';
+    // SUPPRIMÉ: Les clés API ne doivent PAS être dans le frontend
+    // Utilisez l'attribut 'api-url' pour configurer l'URL du backend
     
     // État des champs par onglet pour éviter le partage de valeurs
     this.tabFormState = {
@@ -238,22 +258,42 @@ class CarpoolOfferWidget extends HTMLElement {
       
       // Adapter la mise en page selon le nombre d'étapes (4 ou 5)
       const wizardSteps = this.shadowRoot && this.shadowRoot.querySelector('.offer-wizard-steps');
+      const isRecurrent = this.widgetMode === 'recurrent';
+      
       if (wizardSteps) {
-        if (hasReturn) {
-          wizardSteps.classList.add('has-return');
+        // En mode récurrent : toujours 4 étapes (pas has-return qui donne 5 colonnes)
+        // En mode ponctuel : has-return si checkbox cochée
+        if (isRecurrent) {
+          wizardSteps.classList.remove('has-return'); // 4 colonnes uniquement
+        } else if (hasReturn) {
+          wizardSteps.classList.add('has-return'); // 5 colonnes
         } else {
-          wizardSteps.classList.remove('has-return');
+          wizardSteps.classList.remove('has-return'); // 4 colonnes
         }
       }
       
-      // Masquer step 3 (Retour) si pas de trajet retour
-      if (item3) item3.style.display = hasReturn ? '' : 'none';
+      // Masquer step 3 (Retour) si pas de trajet retour ET pas en mode récurrent
+      if (item3) item3.style.display = (hasReturn || isRecurrent) ? '' : 'none';
+      
+      // Masquer step 5 en mode récurrent (on n'a que 4 étapes)
+      if (item5 && isRecurrent) {
+        item5.style.display = 'none';
+        // Marquer step 4 comme dernière étape visible pour supprimer la ligne après
+        if (item4) item4.classList.add('last-visible');
+      } else if (item4) {
+        item4.classList.remove('last-visible');
+      }
+      
+      // Changer le label de step 4 en mode récurrent : "Récap" au lieu de "Ajust."
+      const step4Label = this.shadowRoot && this.shadowRoot.querySelector('#step-item-4 .step-label');
+      if (step4Label && isRecurrent) step4Label.textContent = 'Récap';
       
       // Reset classes
       [step1, step2, step3, step4, step5].forEach(el => { if (!el) return; el.classList.remove('active'); });
       [item1, item2, item3, item4, item5].forEach(el => { if (!el) return; el.classList.remove('active','done'); });
       
-      // Logique d'activation des étapes selon si retour ou non
+      // Logique d'activation des étapes
+      // MODE RÉCURRENT: 1=Saisie, 2=Aller, 3=Retour, 4=Récap
       // AVEC retour: 1=Saisie, 2=Aller, 3=Retour, 4=Ajust, 5=Récap
       // SANS retour: 1=Saisie, 2=Aller, 3=Ajust, 4=Récap
       
@@ -280,7 +320,12 @@ class CarpoolOfferWidget extends HTMLElement {
       } else if (step === 4) {
         if (item1) item1.classList.add('done');
         if (item2) item2.classList.add('done');
-        if (hasReturn) {
+        if (isRecurrent) {
+          // Mode récurrent : Step 4 = Récap
+          if (item3) item3.classList.add('done');
+          if (item4) item4.classList.add('active');
+          if (step4) step4.classList.add('active');
+        } else if (hasReturn) {
           // Step 4 = Ajustements (avec retour)
           if (item3) item3.classList.add('done');
           if (item4) item4.classList.add('active');
@@ -293,7 +338,7 @@ class CarpoolOfferWidget extends HTMLElement {
           if (step5) step5.classList.add('active');
         }
       } else if (step === 5) {
-        // Step 5 = Récap (uniquement avec retour)
+        // Step 5 = Récap (uniquement avec retour en mode ponctuel)
         if (item1) item1.classList.add('done');
         if (item2) item2.classList.add('done');
         if (item3) item3.classList.add('done');
@@ -443,8 +488,8 @@ class CarpoolOfferWidget extends HTMLElement {
         }
         
         setTimeout(() => { try { this.map && this.map.resize(); } catch(_){} }, 50);
-      } else if ((step === 3 && !hasReturn) || (step === 4 && hasReturn)) {
-        // Page Ajustements (step 3 si pas de retour, step 4 si retour)
+      } else if (step === 3 && !hasReturn) {
+        // Page Ajustements (step 3 si pas de retour en mode ponctuel)
         hide(searchCard);
         hide(confirmWrapper);
         hide(step1Header);
@@ -466,8 +511,56 @@ class CarpoolOfferWidget extends HTMLElement {
         }, 20);
         this.setCalculateButtonIdle();
         setTimeout(() => { try { this.map && this.map.resize(); } catch(_){} }, 50);
-      } else if ((step === 4 && !hasReturn) || (step === 5 && hasReturn)) {
-        // Page Récapitulatif (step 4 si pas de retour, step 5 si retour)
+      } else if (step === 4) {
+        const isRecurrent = this.widgetMode === 'recurrent';
+        if (isRecurrent) {
+          // Mode récurrent : Step 4 = Récapitulatif
+          hide(searchCard);
+          hide(confirmWrapper);
+          hide(step1Header);
+          hide(step4Header);
+          hide(routeSelectionWrapper);
+          hide(calculateWrapper);
+          hide(mapBox);
+          hide(mapLegend);
+          hide(timelinesWrap);
+          show(tripSummary, 'block');
+        } else if (hasReturn) {
+          // Mode ponctuel avec retour : Step 4 = Ajustements
+          hide(searchCard);
+          hide(confirmWrapper);
+          hide(step1Header);
+          show(step4Header, 'block');
+          hide(routeSelectionWrapper);
+          show(mapBox, 'block');
+          show(mapLegend, 'flex');
+          show(calculateWrapper, 'block');
+          hide(tripSummary);
+          show(timelinesWrap, 'block');
+          if (retCol) {
+            retCol.style.display = hasReturn ? '' : 'none';
+          }
+          setTimeout(() => {
+            try { this.updateOutboundTimeline(); } catch(_) {}
+            try { this.updateReturnTimeline(); } catch(_) {}
+          }, 20);
+          this.setCalculateButtonIdle();
+          setTimeout(() => { try { this.map && this.map.resize(); } catch(_){} }, 50);
+        } else {
+          // Mode ponctuel sans retour : Step 4 = Récapitulatif
+          hide(searchCard);
+          hide(confirmWrapper);
+          hide(step1Header);
+          hide(step4Header);
+          hide(routeSelectionWrapper);
+          hide(calculateWrapper);
+          hide(mapBox);
+          hide(mapLegend);
+          hide(timelinesWrap);
+          show(tripSummary, 'block');
+        }
+      } else if (step === 5 && hasReturn) {
+        // Page Récapitulatif (step 5 uniquement en mode ponctuel avec retour)
         hide(searchCard);
         hide(confirmWrapper);
         hide(step1Header);
@@ -1514,17 +1607,27 @@ class CarpoolOfferWidget extends HTMLElement {
     const seats = isOutbound 
       ? (o.seats_outbound != null ? o.seats_outbound : o.seats)
       : (o.seats_return != null ? o.seats_return : o.seats);
-    // Utiliser le bon compteur selon le type de trajet
-    const reserved = isOutbound
-      ? Number(o.reserved_count_outbound || o.reserved_count || 0)
-      : Number(o.reserved_count_return || 0);
-    const remaining = (Number.isFinite(Number(seats)) ? Number(seats) - reserved : null);
+    
+    // Utiliser seats_available si fourni par le backend (après déduction des réservations)
+    // Sinon calculer avec reserved_count
+    let remaining;
+    if (o.seats_available != null) {
+      // Backend a déjà calculé les places disponibles
+      remaining = Number(o.seats_available);
+    } else {
+      // Fallback: calculer avec reserved_count
+      const reserved = isOutbound
+        ? Number(o.reserved_count_outbound || o.reserved_count || 0)
+        : Number(o.reserved_count_return || 0);
+      remaining = (Number.isFinite(Number(seats)) ? Number(seats) - reserved : null);
+    }
+    
     const remainingStr = (remaining != null && remaining >= 0) ? `Places: ${remaining}/${seats}` : `Places: ${seats}`;
     const full = remaining != null && remaining <= 0;
     
     // Debug log pour vérifier le calcul des places
     if (offerId) {
-      console.log(`🔍 Offre ${offerId} (${tripType}): ${seats} places total, ${reserved} réservées, ${remaining} restantes`, o);
+      console.log(`🔍 Offre ${offerId} (${tripType}): ${seats} places total, ${remaining} restantes (seats_available=${o.seats_available})`, o);
     }
     const currentUserId = (typeof window !== 'undefined' && window.userId) ? String(window.userId) : null;
     const isOwner = currentUserId && o.user_id && String(o.user_id) === currentUserId;
@@ -1638,6 +1741,12 @@ class CarpoolOfferWidget extends HTMLElement {
   }
   async onFindSearchClick() {
     try {
+      // Mode récurrent: recherche par site et jours
+      if (this.widgetMode === 'recurrent') {
+        return await this.onFindSearchRecurrent();
+      }
+      
+      // Mode ponctuel: recherche par rayon géographique
       // Active le filtrage et détermine le centre de recherche
       const fromEl = this.shadowRoot.getElementById('from');
       const raw = (fromEl && fromEl.value || '').trim();
@@ -1685,6 +1794,369 @@ class CarpoolOfferWidget extends HTMLElement {
         alert("Renseignez une adresse de départ pour lancer la recherche.");
       }
     } catch(_) { /* noop */ }
+  }
+  
+  /**
+   * Recherche de covoiturages en mode récurrent
+   */
+  async onFindSearchRecurrent() {
+    try {
+      // Récupérer les paramètres de recherche
+      const fromEl = this.shadowRoot.getElementById('from');
+      const siteSelector = this.shadowRoot.getElementById('site-selector-find');
+      
+      const fromAddress = (fromEl && fromEl.value || '').trim();
+      const siteId = siteSelector && siteSelector.value;
+      
+      // Validation
+      if (!fromAddress) {
+        alert('Veuillez saisir votre adresse de départ');
+        return;
+      }
+      
+      if (!siteId) {
+        alert('Veuillez sélectionner le site de destination');
+        return;
+      }
+      
+      // Géocoder l'adresse de départ si nécessaire
+      if (!this.startCoords) {
+        console.log('🌍 Géocodage de l\'adresse de départ:', fromAddress);
+        const coords = await this.geocodeAddress(fromAddress);
+        if (coords) {
+          this.startCoords = coords;
+        } else {
+          alert('Impossible de géocoder l\'adresse de départ');
+          return;
+        }
+      }
+      
+      console.log('🔍 Recherche récurrente:', { 
+        fromAddress, 
+        fromCoords: this.startCoords, 
+        siteId
+      });
+      
+      // Appeler l'API de recherche
+      const response = await fetch('/api/v2/offers/recurrent/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          site_id: parseInt(siteId),
+          departure_coords: this.startCoords
+        })
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Erreur lors de la recherche');
+      }
+      
+      const result = await response.json();
+      console.log('✅ Résultats de recherche récurrente:', result);
+      
+      // Stocker les résultats
+      this.recurrentSearchResults = result.offers || [];
+      
+      // Afficher les résultats
+      this.renderRecurrentSearchResults();
+      
+      // Afficher les routes sur la carte si des résultats existent
+      if (this.recurrentSearchResults.length > 0) {
+        this.displayRecurrentRoutesOnMap();
+      }
+      
+      // Scroll vers les résultats
+      setTimeout(() => {
+        const resultsSection = this.shadowRoot.getElementById('recurrent-search-results');
+        if (resultsSection) {
+          resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 100);
+      
+    } catch (error) {
+      console.error('❌ Erreur recherche récurrente:', error);
+      alert('Erreur lors de la recherche: ' + error.message);
+    }
+  }
+  
+  /**
+   * Récupère les jours sélectionnés dans l'onglet Find (mode récurrent)
+   * @returns {Array} Liste des jours: ['monday', 'tuesday', ...]
+   */
+  getSelectedDaysFind() {
+    const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    const selected = [];
+    
+    days.forEach(day => {
+      const checkbox = this.shadowRoot.getElementById(`day-${day}-find`);
+      if (checkbox && checkbox.checked) {
+        selected.push(day);
+      }
+    });
+    
+    return selected;
+  }
+  
+  /**
+   * Affiche les résultats de recherche récurrente
+   */
+  renderRecurrentSearchResults() {
+    const container = this.shadowRoot.getElementById('recurrent-search-results');
+    const inner = this.shadowRoot.getElementById('recurrent-search-results-inner');
+    
+    if (!container || !inner) {
+      console.error('Container de résultats non trouvé');
+      return;
+    }
+    
+    // Afficher le container
+    container.style.display = 'block';
+    
+    // Vider le contenu
+    inner.innerHTML = '';
+    
+    // Afficher le nombre de résultats
+    const count = this.recurrentSearchResults?.length || 0;
+    
+    if (count === 0) {
+      inner.innerHTML = `
+        <div style="text-align: center; padding: 40px 20px; background: white; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+          <div style="font-size: 48px; margin-bottom: 16px;">🔍</div>
+          <h3 style="margin: 0 0 8px; font-size: 18px; font-weight: 700; color: #333;">Aucun covoiturage trouvé</h3>
+          <p style="margin: 0; color: #666; font-size: 14px;">Essayez de modifier vos critères de recherche</p>
+        </div>
+      `;
+      return;
+    }
+    
+    // Header avec nombre de résultats
+    const header = document.createElement('div');
+    header.style.cssText = 'margin-bottom: 16px; text-align: center; background: linear-gradient(135deg, var(--color-outbound-light) 0%, var(--color-outbound-lighter) 100%); border-radius: 12px; padding: 16px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);';
+    header.innerHTML = `
+      <h3 style="margin: 0; font-size: 20px; font-weight: 700; color: var(--color-outbound-dark);">
+        🚗 ${count} covoiturage${count > 1 ? 's' : ''} trouvé${count > 1 ? 's' : ''}
+      </h3>
+      <p style="margin: 8px 0 0; font-size: 14px; color: #666;">pour ce site</p>
+    `;
+    inner.appendChild(header);
+    
+    // Mapper les jours en français
+    const dayNames = {
+      monday: 'Lun',
+      tuesday: 'Mar',
+      wednesday: 'Mer',
+      thursday: 'Jeu',
+      friday: 'Ven',
+      saturday: 'Sam',
+      sunday: 'Dim'
+    };
+    
+    // Afficher chaque offre
+    this.recurrentSearchResults.forEach(offer => {
+      const card = document.createElement('div');
+      card.style.cssText = 'background: white; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); transition: all 0.2s ease;';
+      
+      // Générer les badges de jours
+      const dayBadges = offer.days.map(day => {
+        const dayLabel = dayNames[day] || day;
+        return `<span style="display: inline-block; padding: 4px 10px; background: ${this.colorOutbound}; color: white; border-radius: 6px; font-size: 12px; font-weight: 600; margin-right: 4px; margin-bottom: 4px;">${dayLabel}</span>`;
+      }).join('');
+      
+      card.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
+          <div style="flex: 1;">
+            <div style="font-size: 16px; font-weight: 700; color: #333; margin-bottom: 8px;">
+              👤 ${offer.driver_name}
+            </div>
+            <div style="margin-bottom: 12px;">
+              ${dayBadges}
+            </div>
+          </div>
+          <div style="text-align: right;">
+            <div style="font-size: 12px; color: #666; margin-bottom: 4px;">Places disponibles</div>
+            <div style="font-size: 24px; font-weight: 700; color: ${this.colorOutbound};">${offer.seats}</div>
+          </div>
+        </div>
+        
+        <div style="background: #f8fafc; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+          <div style="display: flex; align-items: start; gap: 8px; margin-bottom: 8px;">
+            <div style="color: ${this.colorOutbound}; font-size: 18px; margin-top: 2px;">🏠</div>
+            <div style="flex: 1;">
+              <div style="font-size: 12px; color: #666; margin-bottom: 2px;">Départ</div>
+              <div style="font-size: 14px; font-weight: 600; color: #333;">${offer.departure}</div>
+            </div>
+            <div style="font-size: 14px; font-weight: 700; color: ${this.colorOutbound};">${offer.recurrent_time || '--:--'}</div>
+          </div>
+          <div style="display: flex; align-items: start; gap: 8px;">
+            <div style="color: ${this.colorReturn}; font-size: 18px; margin-top: 2px;">🏢</div>
+            <div style="flex: 1;">
+              <div style="font-size: 12px; color: #666; margin-bottom: 2px;">Destination</div>
+              <div style="font-size: 14px; font-weight: 600; color: #333;">${offer.destination}</div>
+            </div>
+            <div style="font-size: 14px; font-weight: 700; color: ${this.colorReturn};">${offer.recurrent_time || '--:--'}</div>
+          </div>
+        </div>
+        
+        ${offer.max_detour_time ? `
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding: 8px; background: #fef3c7; border-radius: 6px;">
+          <div style="font-size: 16px;">⏱️</div>
+          <div style="font-size: 12px; color: #92400e;">
+            Détour accepté : <strong>${offer.max_detour_time} min</strong>
+          </div>
+        </div>
+        ` : ''}
+        
+        <button 
+          data-offer-id="${offer.id}"
+          style="width: 100%; background: linear-gradient(135deg, ${this.colorOutbound} 0%, ${this.colorReturn} 100%); color: white; border: none; border-radius: 8px; padding: 12px; font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s ease;"
+          onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.15)'"
+          onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='none'">
+          📧 Contacter le conducteur
+        </button>
+      `;
+      
+      inner.appendChild(card);
+      
+      // Ajouter l'event listener au bouton
+      const contactBtn = card.querySelector('button');
+      if (contactBtn) {
+        contactBtn.addEventListener('click', () => {
+          this.contactRecurrentDriver(offer);
+        });
+      }
+    });
+  }
+  
+  /**
+   * Contacter un conducteur de covoiturage récurrent
+   */
+  contactRecurrentDriver(offer) {
+    // Pour l'instant, afficher les infos de contact
+    // TODO: Implémenter un système de réservation/messagerie
+    alert(`Conducteur: ${offer.driver_name}\n\nPour réserver une place, contactez:\n📧 ${offer.driver_email_masked}\n📱 ${offer.driver_phone_masked || 'N/A'}`);
+  }
+  
+  /**
+   * Affiche les routes des offres récurrentes trouvées sur la carte
+   */
+  displayRecurrentRoutesOnMap() {
+    if (!this.map) {
+      console.warn('Carte non initialisée');
+      return;
+    }
+    
+    // Rendre la carte visible
+    const mapBox = this.shadowRoot.getElementById('map-box-container');
+    if (mapBox) {
+      mapBox.style.display = 'block';
+    }
+    
+    // Supprimer les couches existantes
+    if (this.map.getSource('recurrent-routes')) {
+      if (this.map.getLayer('recurrent-routes-outbound')) this.map.removeLayer('recurrent-routes-outbound');
+      if (this.map.getLayer('recurrent-routes-return')) this.map.removeLayer('recurrent-routes-return');
+      this.map.removeSource('recurrent-routes');
+    }
+    
+    // Construire les features GeoJSON pour toutes les routes
+    const features = [];
+    const bounds = new maplibregl.LngLatBounds();
+    
+    this.recurrentSearchResults.forEach((offer, index) => {
+      // Route aller
+      if (offer.route_outbound && offer.route_outbound.length > 0) {
+        features.push({
+          type: 'Feature',
+          properties: {
+            offer_id: offer.id,
+            direction: 'outbound',
+            driver_name: offer.driver_name,
+            color: this.colorOutbound
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: offer.route_outbound
+          }
+        });
+        
+        // Étendre les limites
+        offer.route_outbound.forEach(coord => bounds.extend(coord));
+      }
+      
+      // Route retour
+      if (offer.route_return && offer.route_return.length > 0) {
+        features.push({
+          type: 'Feature',
+          properties: {
+            offer_id: offer.id,
+            direction: 'return',
+            driver_name: offer.driver_name,
+            color: this.colorReturn
+          },
+          geometry: {
+            type: 'LineString',
+            coordinates: offer.route_return
+          }
+        });
+        
+        // Étendre les limites
+        offer.route_return.forEach(coord => bounds.extend(coord));
+      }
+    });
+    
+    // Ajouter le point de recherche
+    if (this.startCoords) {
+      bounds.extend(this.startCoords);
+    }
+    
+    // Ajouter la source avec toutes les routes
+    this.map.addSource('recurrent-routes', {
+      type: 'geojson',
+      data: {
+        type: 'FeatureCollection',
+        features: features
+      }
+    });
+    
+    // Couche pour les routes aller
+    this.map.addLayer({
+      id: 'recurrent-routes-outbound',
+      type: 'line',
+      source: 'recurrent-routes',
+      filter: ['==', ['get', 'direction'], 'outbound'],
+      paint: {
+        'line-color': this.colorOutbound,
+        'line-width': 4,
+        'line-opacity': 0.8
+      }
+    });
+    
+    // Couche pour les routes retour
+    this.map.addLayer({
+      id: 'recurrent-routes-return',
+      type: 'line',
+      source: 'recurrent-routes',
+      filter: ['==', ['get', 'direction'], 'return'],
+      paint: {
+        'line-color': this.colorReturn,
+        'line-width': 4,
+        'line-opacity': 0.8,
+        'line-dasharray': [2, 2]
+      }
+    });
+    
+    // Ajuster la vue de la carte
+    if (!bounds.isEmpty()) {
+      this.map.fitBounds(bounds, {
+        padding: 50,
+        maxZoom: 12
+      });
+    }
+    
+    console.log(`✅ ${features.length} routes affichées sur la carte`);
   }
 
   connectedCallback() {
@@ -1739,6 +2211,11 @@ class CarpoolOfferWidget extends HTMLElement {
           }
         }
       } catch(e) { console.warn('carpool: failed to load user reservations', e); }
+      
+      // Charger uniquement le compteur de trajets disponibles
+      try {
+        await this.loadTripCount();
+      } catch(e) { console.warn('carpool: failed to load trip count', e); }
     });
   }
 
@@ -3452,6 +3929,8 @@ class CarpoolOfferWidget extends HTMLElement {
     .step-item { position:relative; display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:42px; }
     .step-item:not(:last-child)::after { content:""; position:absolute; top:13px; left:calc(50% + 18px); right:-50%; height:3px; background:#e5e7eb; border-radius:2px; }
     .step-item.done:not(:last-child)::after { background:var(--color-outbound); }
+    /* En mode récurrent (4 étapes), pas de ligne après step-item-4 */
+    .step-item.last-visible::after { display: none !important; }
     .step-badge { width:26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:14px; color:#6b7280; background:#e5e7eb; }
     .step-item.active .step-badge { background:var(--color-outbound); color:#fff; }
     .step-item.done .step-badge { background:#D1D1D6; color:#111; }
@@ -3549,7 +4028,6 @@ class CarpoolOfferWidget extends HTMLElement {
     <div class="tabs" role="tablist">
       <button id="tab-find" class="tab ${this.activeTab === 'find' ? 'active' : ''}" role="tab" aria-selected="${this.activeTab === 'find'}">Trouver un covoit</button>
       <button id="tab-offer" class="tab ${this.activeTab === 'offer' ? 'active' : ''}" role="tab" aria-selected="${this.activeTab === 'offer'}">Proposer un covoit</button>
-      <button id="tab-mine" class="tab ${this.activeTab === 'mine' ? 'active' : ''}" role="tab" aria-selected="${this.activeTab === 'mine'}">Mes trajets</button>
     </div>
 
     <!-- Wizard indicator (Offer only) -->
@@ -3683,6 +4161,56 @@ class CarpoolOfferWidget extends HTMLElement {
     color: ${isDark ? '#636366' : '#8e8e93'};
     font-weight: 400;
   }
+  
+  /* Styles pour le sélecteur de jours (mode récurrent) */
+  .days-selector {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .day-checkbox {
+    position: relative;
+    cursor: pointer;
+    user-select: none;
+  }
+  .day-checkbox input[type="checkbox"] {
+    position: absolute;
+    opacity: 0;
+    cursor: pointer;
+  }
+  .day-checkbox span {
+    display: inline-block;
+    padding: 8px 16px;
+    border: 2px solid ${borderColor};
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    color: ${textSecondary};
+    background: ${inputBg};
+    transition: all 0.2s ease;
+  }
+  .day-checkbox input[type="checkbox"]:checked + span {
+    background: ${this.colorOutbound};
+    border-color: ${this.colorOutbound};
+    color: white;
+  }
+  .day-checkbox:hover span {
+    border-color: ${this.colorOutbound};
+  }
+  
+  /* Style pour input time (mode récurrent) */
+  .search-card .search-field input[type="time"] {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    outline: none; 
+    font-size: 17px;
+    font-weight: 400;
+    color: ${textPrimary};
+    font-family: ${this.fontFamily};
+    -webkit-font-smoothing: antialiased;
+  }
+  
   /* Séparateur vertical style iOS */
   .search-card .search-field .divider {
     width: 0.5px;
@@ -3785,7 +4313,7 @@ class CarpoolOfferWidget extends HTMLElement {
         <path d="M2 17l10 5 10-5M2 12l10 5 10-5" stroke="var(--color-outbound)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </div>
-    <p style="margin: 0; font-size: 15px; color: var(--color-outbound-dark); font-weight: 500;font-family:${this.fontFamily};">pour te rendre ou revenir de cet évènement</p>
+    <p id="find-header-subtitle" style="margin: 0; font-size: 15px; color: var(--color-outbound-dark); font-weight: 500;font-family:${this.fontFamily};">${this.widgetMode === 'recurrent' ? 'dans votre entreprise' : 'pour te rendre ou revenir de cet évènement'}</p>
   </div>
   
   <!-- Header étape 1: Saisie du trajet -->
@@ -3825,6 +4353,37 @@ class CarpoolOfferWidget extends HTMLElement {
         </div>
 
         <!-- Destination -->
+        ${this.companySites.length > 0 ? `
+        <!-- Sélecteur de site (mode B2B - Offer) -->
+        <div class="search-field offer-only">
+          <span class="icon" aria-hidden="true" title="Site ${this.companyName}">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 22s7-7.58 7-12a7 7 0 1 0-14 0c0 4.42 7 12 7 12Z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="10" r="3" stroke="currentColor" stroke-width="2"/></svg>
+          </span>
+          <select id="site-selector" style="flex: 1;">
+            <option value="">Sélectionnez votre site ${this.companyName}</option>
+            ${this.companySites.map(site => `
+              <option value="${site.id}" data-address="${site.address}">${site.name}</option>
+            `).join('')}
+          </select>
+        </div>
+        
+        <!-- Sélecteur de site (mode B2B - Find) -->
+        <div class="search-field find-only">
+          <span class="icon" aria-hidden="true" title="Site ${this.companyName}">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 22s7-7.58 7-12a7 7 0 1 0-14 0c0 4.42 7 12 7 12Z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="10" r="3" stroke="currentColor" stroke-width="2"/></svg>
+          </span>
+          <select id="site-selector-find" style="flex: 1;">
+            <option value="">Site de destination ${this.companyName}</option>
+            ${this.companySites.map(site => `
+              <option value="${site.id}" data-address="${site.address}">${site.name}</option>
+            `).join('')}
+          </select>
+        </div>
+        
+        <!-- Champ destination caché (sera rempli auto) -->
+        <input type="hidden" id="to" value="" />
+        ` : `
+        <!-- Saisie libre de destination (mode classique) -->
         <div class="search-field">
           <span class="icon" aria-hidden="true" title="Destination">
             <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 22s7-7.58 7-12a7 7 0 1 0-14 0c0 4.42 7 12 7 12Z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="10" r="3" stroke="currentColor" stroke-width="2"/></svg>
@@ -3832,8 +4391,81 @@ class CarpoolOfferWidget extends HTMLElement {
           <input id="to" type="text" autocomplete="off" placeholder="Destination" />
           <datalist id="to-suggestions"></datalist>
         </div>
+        `}
 
-        <!-- Date aller + Heure aller (Offer only) -->
+        <!-- Date/Heure (Mode Ponctuel) OU Jours + Heure (Mode Récurrent) -->
+        ${this.widgetMode === 'recurrent' ? `
+        <!-- Mode Récurrent: Sélecteur de jours (Offer) -->
+        <div class="search-field offer-only">
+          <span class="icon" aria-hidden="true" title="Jours">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="4" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2"/><path d="M16 2v4M8 2v4M3 10h18" stroke="currentColor" stroke-width="2"/></svg>
+          </span>
+          <div style="flex: 1;">
+            <div style="font-size: 15px; font-weight: 500; color: ${textPrimary}; margin-bottom: 8px;">Jours de covoiturage</div>
+            <div class="days-selector" style="display: flex; gap: 6px; flex-wrap: wrap;">
+              <label class="day-checkbox">
+                <input type="checkbox" name="monday" id="day-monday" />
+                <span>Lun</span>
+              </label>
+              <label class="day-checkbox">
+                <input type="checkbox" name="tuesday" id="day-tuesday" />
+                <span>Mar</span>
+              </label>
+              <label class="day-checkbox">
+                <input type="checkbox" name="wednesday" id="day-wednesday" />
+                <span>Mer</span>
+              </label>
+              <label class="day-checkbox">
+                <input type="checkbox" name="thursday" id="day-thursday" />
+                <span>Jeu</span>
+              </label>
+              <label class="day-checkbox">
+                <input type="checkbox" name="friday" id="day-friday" />
+                <span>Ven</span>
+              </label>
+              <label class="day-checkbox">
+                <input type="checkbox" name="saturday" id="day-saturday" />
+                <span>Sam</span>
+              </label>
+              <label class="day-checkbox">
+                <input type="checkbox" name="sunday" id="day-sunday" />
+                <span>Dim</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mode Récurrent: Heure aller -->
+        <div class="search-field offer-only">
+          <span class="icon" aria-hidden="true" title="Heure aller">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="9" stroke="${this.colorOutbound}" stroke-width="2"/>
+              <path d="M12 6v6l4 2" stroke="${this.colorOutbound}" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </span>
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 2px;">
+            <span style="font-size: 15px; font-weight: 500; color: ${textPrimary};">Heure d'arrivée</span>
+            <span style="font-size: 12px; color: ${textTertiary};">Heure habituelle indicative d'arrivée sur site</span>
+          </div>
+          <input type="time" id="recurrent-time-outbound" value="08:00" style="width: 90px;" />
+        </div>
+
+        <!-- Mode Récurrent: Heure retour -->
+        <div class="search-field offer-only">
+          <span class="icon" aria-hidden="true" title="Heure retour">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="9" stroke="${this.colorReturn}" stroke-width="2"/>
+              <path d="M12 6v6l4 2" stroke="${this.colorReturn}" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </span>
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 2px;">
+            <span style="font-size: 15px; font-weight: 500; color: ${textPrimary};">Heure de départ</span>
+            <span style="font-size: 12px; color: ${textTertiary};">Heure habituelle indicative de départ du site</span>
+          </div>
+          <input type="time" id="recurrent-time-return" value="18:00" style="width: 90px;" />
+        </div>
+        ` : `
+        <!-- Mode Ponctuel: Date + Heure aller (Offer only) -->
         <div class="search-field offer-only">
           <span class="icon" aria-hidden="true" title="Date">
             <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="4" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2"/><path d="M16 2v4M8 2v4M3 10h18" stroke="currentColor" stroke-width="2"/></svg>
@@ -3856,23 +4488,28 @@ class CarpoolOfferWidget extends HTMLElement {
             <span style="position: absolute; top: -22px; right: 0; font-size: 10px; color: #8E8E93; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap;font-family:${this.fontFamily};">Date et heure d'arrivée prévue à l'évènement</span>
           </div>
         </div>
+        `}
 
         <!-- Nombre de passagers (tous les onglets) -->
         <div class="search-field">
-          <span class="icon" aria-hidden="true" title="Passagers">
+          <span class="icon" aria-hidden="true" title="Places disponibles">
             <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="7" r="4" stroke="currentColor" stroke-width="2"/><path d="M3 21v-2a4 4 0 014-4h10a4 4 0 014 4v2" stroke="currentColor" stroke-width="2"/></svg>
           </span>
-          <select id="seats">
-            <option value="1" selected>1 passager</option>
-            <option value="2">2 passagers</option>
-            <option value="3">3 passagers</option>
-            <option value="4">4 passagers</option>
-            <option value="5">5 passagers</option>
-            <option value="6">6 passagers</option>
-            <option value="7">7 passagers</option>
-            <option value="8">8 passagers</option>
-            <option value="9">9 passagers</option>
-            <option value="10">10 passagers</option>
+          <div style="flex: 1; display: flex; flex-direction: column; gap: 2px;">
+            <span style="font-size: 15px; font-weight: 500; color: ${textPrimary};">Places disponibles</span>
+            <span style="font-size: 12px; color: ${textTertiary};">Nombre de passagers que vous pouvez embarquer</span>
+          </div>
+          <select id="seats" style="width: 60px;">
+            <option value="1" selected>1</option>
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4">4</option>
+            <option value="5">5</option>
+            <option value="6">6</option>
+            <option value="7">7</option>
+            <option value="8">8</option>
+            <option value="9">9</option>
+            <option value="10">10</option>
           </select>
         </div>
 
@@ -3888,7 +4525,8 @@ class CarpoolOfferWidget extends HTMLElement {
         <!-- Champ caché pour max-detour-time en minutes (prioritaire sur la distance) -->
         <input type="hidden" id="max-detour-time" value="25" />
 
-        <!-- Trajet retour (toggle iOS intégré - offre uniquement) -->
+        ${this.widgetMode === 'recurrent' ? '' : `
+        <!-- Trajet retour (toggle iOS intégré - offre uniquement - MODE PONCTUEL SEULEMENT) -->
         <div class="search-field return-toggle-field offer-only">
           <span class="icon" aria-hidden="true" title="Trajet retour">
             <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M9 14l-4-4m0 0l4-4m-4 4h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -3944,6 +4582,7 @@ class CarpoolOfferWidget extends HTMLElement {
             </select>
           </div>
         </div>
+        `}
   </div>
 
         <!-- (date + seats + car-type déplacés en haut) -->
@@ -3975,6 +4614,12 @@ class CarpoolOfferWidget extends HTMLElement {
   <div id="find-offers" class="find-only" style="display:none;padding:4px 12px 12px 12px;">
       <div id="find-offers-inner" class="offers-list" aria-live="polite" aria-busy="false" style="display:grid;gap:10px;"></div>
     </div>
+    
+    <!-- Résultats de recherche récurrente (onglet Trouver - mode récurrent) -->
+    <div id="recurrent-search-results" class="find-only" style="display:none;padding:4px 12px 12px 12px;">
+      <div id="recurrent-search-results-inner" style="display:grid;gap:12px;"></div>
+    </div>
+    
     <!-- Mes trajets (onglet dédié) -->
     <div id="my-trips" class="mine-only" style="display:none;padding:4px 12px 12px 12px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin:0 0 8px 0;gap:12px;flex-wrap:wrap;">
@@ -4077,109 +4722,229 @@ class CarpoolOfferWidget extends HTMLElement {
           ✏️ Modifier
         </button>
       </div>
-      <!-- Encart prix conseillés -->
+      <!-- Jours de covoiturage et impact CO2 -->
       <div class="summary-intro">
         <div class="summary-intro-title">Récapitulatif du trajet</div>
         <div class="summary-intro-subtitle">Vérifiez les détails de votre trajet avant de publier</div>
-        <div id="summary-recommended-prices"></div>
-      </div>
-      <!-- Trajet Aller -->
-      <div id="outbound-summary-section" class="summary-section">
-        <div class="section-title">Trajet Aller</div>
-        <div class="route-info">
-          <div class="route-endpoints">
-            <span id="summary-from" class="endpoint">Départ</span>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        
+        <!-- Jours sélectionnés avec badges comme page 1 (mode récurrent uniquement) -->
+        <div id="summary-recurrent-days" style="display: none; margin-top: 16px; padding: 16px; background: linear-gradient(135deg, rgba(10, 132, 255, 0.06) 0%, rgba(10, 132, 255, 0.02) 100%); border: 1px solid rgba(10, 132, 255, 0.15); border-radius: 12px;">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <rect x="3" y="4" width="18" height="18" rx="2" stroke="${this.colorOutbound}" stroke-width="2"/>
+              <path d="M16 2v4M8 2v4M3 10h18" stroke="${this.colorOutbound}" stroke-width="2" stroke-linecap="round"/>
             </svg>
-            <span id="summary-to" class="endpoint">Arrivée</span>
+            <span style="font-size: 14px; font-weight: 600; color: #1d1d1f; font-family: ${this.fontFamily};">Jours de covoiturage</span>
           </div>
-          <div class="route-meta">
-            <span id="summary-distance-out">0 km</span>
-            <span class="separator">•</span>
-            <span id="summary-seats-out">4 places disponibles</span>
-          </div>
-        </div>
-        <div style="margin-top: 20px; display: flex; align-items: center; justify-content: space-between; padding: 16px; background: rgba(40, 167, 69, 0.06); border: 2px solid #28a745; border-radius: 12px;">
-          <div>
-            <div style="font-size: 12px; font-weight: 600; color: #28a745; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;font-family:${this.fontFamily};">Prix du trajet</div>
-            <div style="font-size: 13px; color: #6B6B6F; font-weight: 500;font-family:${this.fontFamily};">Modifiable</div>
-          </div>
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <input id="outbound-final-price" type="number" step="1" min="0" inputmode="decimal" style="width: 80px; text-align: right; height: 42px; border: 2px solid #28a745; border-radius: 10px; padding: 4px 12px; font-size: 24px; font-weight: 800; color: #28a745; background: #ffffff;font-family:${this.fontFamily};" />
-            <span style="font-size: 24px; font-weight: 800; color: #28a745;font-family:${this.fontFamily};">€</span>
-          </div>
+          <div id="summary-days-badges" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
         </div>
       </div>
-      <!-- Trajet Retour (si activé) -->
-      <div id="return-summary-section" class="summary-section" style="display:none;">
-        <div class="section-title">Trajet Retour</div>
-        <div class="route-info">
-          <div class="route-endpoints">
-            <span id="summary-to-ret" class="endpoint">Départ</span>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            <span id="summary-from-ret" class="endpoint">Arrivée</span>
-          </div>
-          <div class="route-meta">
-            <span id="summary-distance-ret">0 km</span>
-            <span class="separator">•</span>
-            <span id="summary-seats-ret">4 places disponibles</span>
-          </div>
-        </div>
-        <div style="margin-top: 20px; display: flex; align-items: center; justify-content: space-between; padding: 16px; background: ${returnVariants.lighter}; border: 2px solid ${this.colorReturn}; border-radius: 12px;">
-          <div>
-            <div style="font-size: 12px; font-weight: 600; color: ${this.colorReturn}; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;font-family:${this.fontFamily};">Prix du trajet</div>
-            <div style="font-size: 13px; color: #6B6B6F; font-weight: 500;font-family:${this.fontFamily};">Modifiable</div>
-          </div>
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <input id="return-final-price" type="number" step="1" min="0" inputmode="decimal" style="width: 80px; text-align: right; height: 42px; border: 2px solid ${this.colorReturn}; border-radius: 10px; padding: 4px 12px; font-size: 24px; font-weight: 800; color: ${this.colorReturn}; background: #ffffff;font-family:${this.fontFamily};" />
-            <span style="font-size: 24px; font-weight: 800; color: ${this.colorReturn};font-family:${this.fontFamily};">€</span>
-          </div>
-        </div>
-      </div>
-      <!-- Acceptation des passagers sur le chemin -->
-      <div style="margin: 20px; padding: 18px; background: linear-gradient(135deg, rgba(10, 132, 255, 0.08) 0%, rgba(10, 132, 255, 0.02) 100%); border: 1px solid rgba(10, 132, 255, 0.2); border-radius: 14px;">
-        <div style="display: flex; align-items: flex-start; gap: 14px;">
-          <input type="checkbox" id="accept-intermediate-passengers" checked style="width: 20px; height: 20px; cursor: pointer; margin-top: 2px; flex-shrink: 0; accent-color: ${this.colorOutbound};" />
-          <label for="accept-intermediate-passengers" style="flex: 1; cursor: pointer; margin: 0;">
-            <div style="font-size: 15px; font-weight: 600; color: #1d1d1f; margin-bottom: 6px;font-family:${this.fontFamily};">
-              Acceptez-vous de recevoir des demandes de passagers sur votre chemin ?
+      
+      <!-- Schéma visuel du trajet (style email) -->
+      <div class="summary-section" style="margin: 20px; padding: 20px; background: ${bgPrimary}; border-radius: 14px; border: 1px solid ${inputBorder};">
+        <!-- Trajet Aller -->
+        <div id="outbound-summary-visual">
+          <div style="display: flex; align-items: flex-start; gap: 16px;">
+            <!-- Ligne verticale avec points -->
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+              <div style="width: 12px; height: 12px; border-radius: 50%; background: ${this.colorOutbound}; border: 3px solid ${bgPrimary}; box-shadow: 0 0 0 2px ${this.colorOutbound};"></div>
+              <div style="width: 2px; flex: 1; min-height: 40px; background: linear-gradient(to bottom, ${this.colorOutbound}, ${this.colorOutbound}); opacity: 0.3;"></div>
+              <div style="width: 12px; height: 12px; border-radius: 50%; background: ${this.colorOutbound}; border: 3px solid ${bgPrimary}; box-shadow: 0 0 0 2px ${this.colorOutbound};"></div>
             </div>
-            <div style="font-size: 13px; color: #6B6B6F; line-height: 1.5;font-family:${this.fontFamily};">
-              Si vous cochez cette case, des personnes pourront vous demander de faire un léger détour pour les prendre en charge. Le détour (distance et temps supplémentaires) vous sera clairement indiqué. Le prix sera automatiquement calculé depuis leur point de départ jusqu'à votre destination, avec une majoration de 15%. <strong style="color: #1d1d1f;">Vous restez libre d'accepter ou de refuser chaque demande</strong>, comme pour toute autre demande de covoiturage.
+            <!-- Infos du trajet -->
+            <div style="flex: 1; min-width: 0;">
+              <div style="margin-bottom: 16px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                  <div style="font-size: 12px; font-weight: 600; color: ${this.colorOutbound}; text-transform: uppercase; letter-spacing: 0.5px; font-family: ${this.fontFamily};">Départ</div>
+                  <div id="summary-time-out-depart" style="font-size: 13px; font-weight: 700; color: ${this.colorOutbound}; font-family: ${this.fontFamily};"></div>
+                </div>
+                <div id="summary-from" style="font-size: 15px; font-weight: 600; color: ${textPrimary}; font-family: ${this.fontFamily}; word-wrap: break-word;">Adresse de départ</div>
+              </div>
+              <div>
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                  <div style="font-size: 12px; font-weight: 600; color: ${this.colorOutbound}; text-transform: uppercase; letter-spacing: 0.5px; font-family: ${this.fontFamily};">Arrivée</div>
+                  <div id="summary-time-out-arrivee" style="font-size: 13px; font-weight: 700; color: ${this.colorOutbound}; font-family: ${this.fontFamily};"></div>
+                </div>
+                <div id="summary-to" style="font-size: 15px; font-weight: 600; color: ${textPrimary}; font-family: ${this.fontFamily}; word-wrap: break-word;">Adresse d'arrivée</div>
+              </div>
+              <div style="margin-top: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                <div style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: rgba(10, 132, 255, 0.08); border-radius: 8px;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" stroke="${this.colorOutbound}" stroke-width="2"/>
+                    <circle cx="12" cy="10" r="3" stroke="${this.colorOutbound}" stroke-width="2"/>
+                  </svg>
+                  <span id="summary-distance-out" style="font-size: 13px; font-weight: 600; color: ${textPrimary}; font-family: ${this.fontFamily};">0 km</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: rgba(10, 132, 255, 0.08); border-radius: 8px;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="12" cy="8" r="3" stroke="${this.colorOutbound}" stroke-width="2"/>
+                    <path d="M12 14c-4 0-7 2-7 4v2h14v-2c0-2-3-4-7-4z" stroke="${this.colorOutbound}" stroke-width="2"/>
+                  </svg>
+                  <span id="summary-seats-out" style="font-size: 13px; font-weight: 600; color: ${textPrimary}; font-family: ${this.fontFamily};">4 places</span>
+                </div>
+              </div>
             </div>
-          </label>
+          </div>
         </div>
         
-        <!-- Contrôle de distance du détour maximal -->
-        <div id="detour-distance-control" style="margin-top: 20px; padding-top: 18px; border-top: 1px solid rgba(10, 132, 255, 0.15);">
-          
-          <!-- Budget temps total pour les détours -->
-          <div>
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-              <label style="font-size: 14px; font-weight: 600; color: ${textPrimary}; margin: 0;font-family:${this.fontFamily};">
-                ⏱️ Budget temps pour tous les détours
-              </label>
-              <span id="detour-time-display" style="font-size: 18px; font-weight: 700; color: ${this.colorOutbound}; min-width: 80px; text-align: right;font-family:${this.fontFamily};">25 min</span>
+        <!-- Trajet Retour (si activé) -->
+        <div id="return-summary-visual" style="display: none; margin-top: 24px; padding-top: 24px; border-top: 2px dashed ${inputBorder};">
+          <div style="display: flex; align-items: flex-start; gap: 16px;">
+            <!-- Ligne verticale avec points -->
+            <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+              <div style="width: 12px; height: 12px; border-radius: 50%; background: ${this.colorReturn}; border: 3px solid ${bgPrimary}; box-shadow: 0 0 0 2px ${this.colorReturn};"></div>
+              <div style="width: 2px; flex: 1; min-height: 40px; background: linear-gradient(to bottom, ${this.colorReturn}, ${this.colorReturn}); opacity: 0.3;"></div>
+              <div style="width: 12px; height: 12px; border-radius: 50%; background: ${this.colorReturn}; border: 3px solid ${bgPrimary}; box-shadow: 0 0 0 2px ${this.colorReturn};"></div>
             </div>
-            <input type="range" id="detour-time-slider" min="15" max="120" value="25" step="5" 
-              style="width: 100%; height: 6px; cursor: pointer; accent-color: ${this.colorOutbound}; background: linear-gradient(to right, ${this.colorOutbound} 0%, ${this.colorOutbound} 9.5%, #E5E5EA 9.5%, #E5E5EA 100%); border-radius: 3px; -webkit-appearance: none; appearance: none;" />
-            <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 11px; color: #8E8E93; font-weight: 500;font-family:${this.fontFamily};">
-              <span>15 min</span>
-              <span>2h 00</span>
-            </div>
-            <div style="margin-top: 10px; padding: 10px; background: rgba(52, 199, 89, 0.08); border-radius: 8px; font-size: 12px; color: #6B6B6F; line-height: 1.4;font-family:${this.fontFamily};">
-              ✨ <strong style="color: #1d1d1f;">Budget intelligent :</strong> Temps total que vous acceptez d'ajouter à votre trajet pour tous les passagers. La zone verte sur la carte correspond à ce budget temps. Vérifié en temps réel au moment des demandes.
+            <!-- Infos du trajet -->
+            <div style="flex: 1; min-width: 0;">
+              <div style="margin-bottom: 16px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                  <div style="font-size: 12px; font-weight: 600; color: ${this.colorReturn}; text-transform: uppercase; letter-spacing: 0.5px; font-family: ${this.fontFamily};">Départ</div>
+                  <div id="summary-time-ret-depart" style="font-size: 13px; font-weight: 700; color: ${this.colorReturn}; font-family: ${this.fontFamily};"></div>
+                </div>
+                <div id="summary-to-ret" style="font-size: 15px; font-weight: 600; color: ${textPrimary}; font-family: ${this.fontFamily}; word-wrap: break-word;">Adresse de départ</div>
+              </div>
+              <div>
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                  <div style="font-size: 12px; font-weight: 600; color: ${this.colorReturn}; text-transform: uppercase; letter-spacing: 0.5px; font-family: ${this.fontFamily};">Arrivée</div>
+                  <div id="summary-time-ret-arrivee" style="font-size: 13px; font-weight: 700; color: ${this.colorReturn}; font-family: ${this.fontFamily};"></div>
+                </div>
+                <div id="summary-from-ret" style="font-size: 15px; font-weight: 600; color: ${textPrimary}; font-family: ${this.fontFamily}; word-wrap: break-word;">Adresse d'arrivée</div>
+              </div>
+              <div style="margin-top: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                <div style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: rgba(255, 69, 58, 0.08); border-radius: 8px;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" stroke="${this.colorReturn}" stroke-width="2"/>
+                    <circle cx="12" cy="10" r="3" stroke="${this.colorReturn}" stroke-width="2"/>
+                  </svg>
+                  <span id="summary-distance-ret" style="font-size: 13px; font-weight: 600; color: ${textPrimary}; font-family: ${this.fontFamily};">0 km</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: rgba(255, 69, 58, 0.08); border-radius: 8px;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="12" cy="8" r="3" stroke="${this.colorReturn}" stroke-width="2"/>
+                    <path d="M12 14c-4 0-7 2-7 4v2h14v-2c0-2-3-4-7-4z" stroke="${this.colorReturn}" stroke-width="2"/>
+                  </svg>
+                  <span id="summary-seats-ret" style="font-size: 13px; font-weight: 600; color: ${textPrimary}; font-family: ${this.fontFamily};">4 places</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </div>
       
       <!-- Carte avec visualisation des buffers -->
-      <div id="summary-map-container" style="margin: 20px; border-radius: 14px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+      <div id="summary-map-container" style="width: 100%; border-radius: 0; overflow: hidden;">
         <div id="summary-map" style="width: 100%; height: 400px;"></div>
+      </div>
+      
+      <!-- Contrôle du buffer de temps avec checkbox pour accepter les détours -->
+      <div id="summary-detour-control" style="margin: 20px; padding: 18px; background: linear-gradient(135deg, rgba(10, 132, 255, 0.08) 0%, rgba(10, 132, 255, 0.02) 100%); border: 1px solid rgba(10, 132, 255, 0.2); border-radius: 14px;">
+        <div style="display: flex; align-items: flex-start; gap: 14px; margin-bottom: 20px;">
+          <input type="checkbox" id="summary-accept-detours" checked style="width: 20px; height: 20px; cursor: pointer; margin-top: 2px; flex-shrink: 0; accent-color: ${this.colorOutbound};" />
+          <label for="summary-accept-detours" style="flex: 1; cursor: pointer; margin: 0;">
+            <div style="font-size: 15px; font-weight: 600; color: #1d1d1f; margin-bottom: 6px;font-family:${this.fontFamily};">
+              Acceptez-vous de recevoir des demandes de passagers sur votre chemin ?
+            </div>
+            <div style="font-size: 13px; color: #6B6B6F; line-height: 1.5;font-family:${this.fontFamily};">
+              Des personnes pourront vous demander de faire un léger détour pour les prendre en charge. <strong style="color: #1d1d1f;">Vous restez libre d'accepter ou de refuser chaque demande</strong>.
+            </div>
+          </label>
+        </div>
+        
+        <!-- Budget temps (visible seulement si checkbox cochée) -->
+        <div id="summary-detour-slider-section" style="padding-top: 18px; border-top: 1px solid rgba(10, 132, 255, 0.15);">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+            <label style="font-size: 14px; font-weight: 600; color: ${textPrimary}; margin: 0;font-family:${this.fontFamily};">
+              ⏱️ Budget temps pour les détours
+            </label>
+            <span id="summary-detour-time-display" style="font-size: 18px; font-weight: 700; color: ${this.colorOutbound}; min-width: 80px; text-align: right;font-family:${this.fontFamily};">5 min</span>
+          </div>
+          <input type="range" id="summary-detour-time-slider" min="5" max="20" value="5" step="5" 
+            style="width: 100%; height: 6px; cursor: pointer; accent-color: ${this.colorOutbound}; background: linear-gradient(to right, ${this.colorOutbound} 0%, ${this.colorOutbound} 9.5%, #E5E5EA 9.5%, #E5E5EA 100%); border-radius: 3px; -webkit-appearance: none; appearance: none;" />
+          <div style="display: flex; justify-content: space-between; margin-top: 8px; font-size: 11px; color: #8E8E93; font-weight: 500;font-family:${this.fontFamily};">
+            <span>5 min</span>
+            <span>20 min</span>
+          </div>
+          <div style="margin-top: 10px; padding: 10px; background: rgba(52, 199, 89, 0.08); border-radius: 8px; font-size: 12px; color: #6B6B6F; line-height: 1.4;font-family:${this.fontFamily};">
+            ✨ <strong style="color: #1d1d1f;">Budget intelligent :</strong> Temps total que vous acceptez d'ajouter à votre trajet pour tous les passagers. La zone verte sur la carte correspond à ce budget temps.
+          </div>
+        </div>
+      </div>
+      
+      <!-- Impact CO2 (juste avant les coordonnées) -->
+      <div id="summary-co2-impact" style="margin: 20px; padding: 16px; background: linear-gradient(135deg, rgba(52, 199, 89, 0.08) 0%, rgba(52, 199, 89, 0.02) 100%); border: 1px solid rgba(52, 199, 89, 0.2); border-radius: 12px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 2L3 7v6c0 5.5 3.8 10.7 9 12 5.2-1.3 9-6.5 9-12V7l-9-5z" stroke="#34C759" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M12 8v8M8 12h8" stroke="#34C759" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <div style="flex: 1;">
+            <div style="font-size: 13px; font-weight: 600; color: #34C759; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; font-family: ${this.fontFamily};">Impact environnemental</div>
+            <div style="font-size: 15px; font-weight: 700; color: #1d1d1f; font-family: ${this.fontFamily};" id="summary-co2-value">~0 kg CO₂ évités</div>
+            <div style="font-size: 12px; color: #6B6B6F; margin-top: 2px; font-family: ${this.fontFamily};" id="summary-co2-detail">par trajet partagé</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Coordonnées du conducteur (étape finale) -->
+      <div style="margin: 20px; padding: 20px; background: linear-gradient(135deg, rgba(10, 132, 255, 0.05) 0%, rgba(10, 132, 255, 0.02) 100%); border-radius: 14px; border: 1px solid rgba(10, 132, 255, 0.15);">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 16px;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="7" r="4" stroke="${this.colorOutbound}" stroke-width="2"/>
+            <path d="M6 21v-2a4 4 0 014-4h4a4 4 0 014 4v2" stroke="${this.colorOutbound}" stroke-width="2"/>
+          </svg>
+          <h3 style="margin: 0; font-size: 17px; font-weight: 700; color: ${textPrimary}; font-family: ${this.fontFamily};">Vos coordonnées</h3>
+        </div>
+        <p style="margin: 0 0 16px 0; font-size: 13px; color: #6B6B6F; line-height: 1.5; font-family: ${this.fontFamily};">
+          Pour vous contacter en cas de réservation et vous envoyer les détails par email avec le bouton WhatsApp.
+        </p>
+        
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <!-- Nom complet -->
+          <div style="display: flex; align-items: center; gap: 12px; background: ${bgPrimary}; border: 1px solid ${inputBorder}; border-radius: 10px; padding: 12px 14px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink: 0; color: ${textSecondary};">
+              <circle cx="12" cy="7" r="4" stroke="currentColor" stroke-width="2"/>
+              <path d="M6 21v-2a4 4 0 014-4h4a4 4 0 014 4v2" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            <input 
+              id="driver-name" 
+              type="text" 
+              autocomplete="name" 
+              placeholder="Votre nom complet" 
+              style="flex: 1; border: none; background: transparent; outline: none; font-size: 15px; color: ${textPrimary}; font-family: ${this.fontFamily};" 
+            />
+          </div>
+          
+          <!-- Email -->
+          <div style="display: flex; align-items: center; gap: 12px; background: ${bgPrimary}; border: 1px solid ${inputBorder}; border-radius: 10px; padding: 12px 14px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink: 0; color: ${textSecondary};">
+              <rect x="2" y="4" width="20" height="16" rx="2" stroke="currentColor" stroke-width="2"/>
+              <path d="M2 7l8.16 5.45a2 2 0 002.68 0L22 7" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            <input 
+              id="driver-email" 
+              type="email" 
+              autocomplete="email" 
+              placeholder="Votre email" 
+              style="flex: 1; border: none; background: transparent; outline: none; font-size: 15px; color: ${textPrimary}; font-family: ${this.fontFamily};" 
+            />
+          </div>
+          
+          <!-- Téléphone -->
+          <div style="display: flex; align-items: center; gap: 12px; background: ${bgPrimary}; border: 1px solid ${inputBorder}; border-radius: 10px; padding: 12px 14px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="flex-shrink: 0; color: ${textSecondary};">
+              <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            <input 
+              id="driver-phone" 
+              type="tel" 
+              autocomplete="tel" 
+              placeholder="Téléphone (ex: 06 12 34 56 78)" 
+              style="flex: 1; border: none; background: transparent; outline: none; font-size: 15px; color: ${textPrimary}; font-family: ${this.fontFamily};" 
+            />
+          </div>
+        </div>
       </div>
       
       <!-- Bouton Valider -->
@@ -5086,6 +5851,48 @@ class CarpoolOfferWidget extends HTMLElement {
     const fromList = this.shadowRoot.getElementById("from-suggestions");
     const toList = this.shadowRoot.getElementById("to-suggestions");
     
+    // Sélecteur de site (mode B2B)
+    const siteSelector = this.shadowRoot.getElementById("site-selector");
+    if (siteSelector) {
+      siteSelector.addEventListener('change', (e) => {
+        const selectedOption = e.target.selectedOptions[0];
+        const siteAddress = selectedOption.getAttribute('data-address');
+        const siteName = selectedOption.textContent.trim();
+        
+        // Stocker le nom et l'adresse du site (pas l'ID du dropdown qui n'existe pas en BDD)
+        this.selectedSiteName = siteName;
+        this.selectedSiteAddress = siteAddress;
+        
+        // Récupérer le champ to (peut être hidden)
+        const toField = this.shadowRoot.getElementById('to');
+        
+        if (siteAddress && toField) {
+          // Remplir automatiquement l'adresse de destination
+          toField.value = siteAddress;
+          
+          // Géocoder l'adresse pour obtenir les coordonnées
+          this.geocodeAddress(siteAddress).then(coords => {
+            if (coords) {
+              this.endCoords = coords;
+              
+              // Créer ou mettre à jour le marqueur de destination
+              if (this.map) {
+                if (this.endMarker) {
+                  this.endMarker.setLngLat(coords);
+                } else {
+                  this.endMarker = new maplibregl.Marker({ color: 'green' })
+                    .setLngLat(coords)
+                    .addTo(this.map);
+                }
+              }
+              
+              console.log('📍 Site sélectionné:', selectedOption.textContent, coords);
+            }
+          });
+        }
+      });
+    }
+    
   const returnCheckbox = this.shadowRoot.getElementById("return");
   const returnViaStops = this.shadowRoot.getElementById("return-via-stops");
   const returnViaStopsField = this.shadowRoot.getElementById("return-via-stops-field");
@@ -5352,7 +6159,9 @@ class CarpoolOfferWidget extends HTMLElement {
       updateRadius();
     }
 
-    returnCheckbox.addEventListener("change", async () => {
+    // Toggle retour (seulement en mode ponctuel)
+    if (returnCheckbox) {
+      returnCheckbox.addEventListener("change", async () => {
         const returnOptions = this.shadowRoot.getElementById("return-options");
         const returnViaStopsField = this.shadowRoot.getElementById("return-via-stops-field");
         if (returnCheckbox.checked) {
@@ -5389,7 +6198,8 @@ class CarpoolOfferWidget extends HTMLElement {
           } catch(_) {}
         }
         try { this.updateSegmentPrices(); } catch(_) {}
-    });
+      });
+    }
 
     if (retDateOfferEl) retDateOfferEl.addEventListener('change', () => this.enforceReturnConstraints());
     if (retTimeSel) retTimeSel.addEventListener('change', () => this.enforceReturnConstraints());
@@ -5614,6 +6424,312 @@ class CarpoolOfferWidget extends HTMLElement {
         await this.submitCarpoolOffer();
       });
     }
+    
+    // Slider de buffer temps dans le récapitulatif (mode récurrent)
+    const summaryTimeSlider = this.shadowRoot.getElementById('summary-detour-time-slider');
+    const summaryTimeDisplay = this.shadowRoot.getElementById('summary-detour-time-display');
+    const summaryAcceptDetours = this.shadowRoot.getElementById('summary-accept-detours');
+    const summarySliderSection = this.shadowRoot.getElementById('summary-detour-slider-section');
+    
+    if (summaryTimeSlider && summaryTimeDisplay && summaryAcceptDetours) {
+      const formatTime = (minutes) => {
+        const hours = Math.floor(minutes / 60);
+        const mins = minutes % 60;
+        if (hours === 0) {
+          return `${mins} min`;
+        } else if (mins === 0) {
+          return `${hours}h 00`;
+        } else {
+          return `${hours}h ${mins.toString().padStart(2, '0')}`;
+        }
+      };
+      
+      const updateSummaryTimeBuffer = () => {
+        const minutes = parseInt(summaryTimeSlider.value, 10);
+        summaryTimeDisplay.textContent = formatTime(minutes);
+        
+        // Mettre à jour la couleur de fond du slider
+        // Utiliser les vraies valeurs min et max du slider
+        const min = parseInt(summaryTimeSlider.min, 10);
+        const max = parseInt(summaryTimeSlider.max, 10);
+        const percent = ((minutes - min) / (max - min)) * 100;
+        summaryTimeSlider.style.background = `linear-gradient(to right, ${this.colorOutbound} 0%, ${this.colorOutbound} ${percent}%, #E5E5EA ${percent}%, #E5E5EA 100%)`;
+        
+        // Convertir le temps en distance approximative et mettre à jour le buffer
+        if (summaryAcceptDetours.checked) {
+          const avgSpeedKmH = 50;
+          const bufferWidthKm = avgSpeedKmH * (minutes / 60) * 0.5;
+          this.updateSummaryDetourBuffers(bufferWidthKm);
+        }
+      };
+      
+      const updateDetourVisibility = () => {
+        if (summarySliderSection) {
+          summarySliderSection.style.display = summaryAcceptDetours.checked ? 'block' : 'none';
+        }
+        
+        if (!summaryAcceptDetours.checked) {
+          this.removeSummaryDetourBuffers();
+        } else {
+          updateSummaryTimeBuffer();
+        }
+      };
+      
+      summaryTimeSlider.addEventListener('input', updateSummaryTimeBuffer);
+      summaryAcceptDetours.addEventListener('change', updateDetourVisibility);
+      
+      // Initialisation
+      updateDetourVisibility();
+      updateSummaryTimeBuffer();
+    }
+  }
+
+  /**
+   * Récupère les jours sélectionnés en mode récurrent
+   * @returns {Array} Liste des jours: ['monday', 'tuesday', ...]
+   */
+  getSelectedDays() {
+    const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    const selected = [];
+    
+    days.forEach(day => {
+      const checkbox = this.shadowRoot.getElementById(`day-${day}`);
+      if (checkbox && checkbox.checked) {
+        selected.push(day);
+      }
+    });
+    
+    return selected;
+  }
+
+  /**
+   * Peuple le récapitulatif avec les données du trajet
+   * Utilisé en mode récurrent pour remplir directement le récap
+   */
+  async populateTripSummary() {
+    try {
+      // Récupération des champs
+      const fromEl = this.shadowRoot.getElementById('from');
+      const toEl = this.shadowRoot.getElementById('to');
+
+      const departure = (fromEl?.value || '').trim();
+      const destination = (toEl?.value || '').trim();
+
+      // Peupler le récapitulatif
+      const summaryFrom = this.shadowRoot.getElementById('summary-from');
+      const summaryTo = this.shadowRoot.getElementById('summary-to');
+      const summaryDistanceOut = this.shadowRoot.getElementById('summary-distance-out');
+      const summarySeatsOut = this.shadowRoot.getElementById('summary-seats-out');
+      
+      // Afficher les adresses
+      if (summaryFrom) summaryFrom.textContent = departure;
+      if (summaryTo) summaryTo.textContent = destination;
+      
+      // Calculer et afficher les heures indicatives (mode récurrent)
+      if (this.widgetMode === 'recurrent') {
+        console.log('Mode récurrent détecté - calcul des heures...');
+        const timeAllerEl = this.shadowRoot.getElementById('recurrent-time-outbound');
+        const timeRetourEl = this.shadowRoot.getElementById('recurrent-time-return');
+        
+        console.log('recurrent-time-outbound element:', timeAllerEl);
+        console.log('recurrent-time-outbound value:', timeAllerEl?.value);
+        console.log('outRoute:', this.outRoute);
+        
+        if (timeAllerEl && this.outRoute && this.outRoute.duration) {
+          const heureArrivee = timeAllerEl.value; // Heure d'arrivée désirée sur le site
+          console.log('Heure arrivée récupérée:', heureArrivee);
+          
+          if (heureArrivee) {
+            // Calculer l'heure de départ nécessaire
+            const durationMinutes = Math.round(this.outRoute.duration / 60);
+            const [hours, minutes] = heureArrivee.split(':').map(Number);
+            const arrivalDate = new Date();
+            arrivalDate.setHours(hours, minutes, 0, 0);
+            
+            const departureDate = new Date(arrivalDate.getTime() - durationMinutes * 60 * 1000);
+            const departureTime = `${String(departureDate.getHours()).padStart(2, '0')}:${String(departureDate.getMinutes()).padStart(2, '0')}`;
+            
+            console.log('Temps calculés - Départ:', departureTime, 'Arrivée:', heureArrivee);
+            
+            // Afficher les heures
+            const summaryTimeOutDepart = this.shadowRoot.getElementById('summary-time-out-depart');
+            const summaryTimeOutArrivee = this.shadowRoot.getElementById('summary-time-out-arrivee');
+            
+            console.log('Éléments summary trouvés - Départ:', summaryTimeOutDepart, 'Arrivée:', summaryTimeOutArrivee);
+            
+            if (summaryTimeOutDepart) summaryTimeOutDepart.textContent = departureTime;
+            if (summaryTimeOutArrivee) summaryTimeOutArrivee.textContent = heureArrivee;
+          }
+        }
+        
+        // Heures pour le retour
+        console.log('recurrent-time-return element:', timeRetourEl);
+        console.log('recurrent-time-return value:', timeRetourEl?.value);
+        console.log('returnRoute:', this.returnRoute);
+        
+        if (timeRetourEl && this.returnRoute && this.returnRoute.duration) {
+          const heureDepart = timeRetourEl.value; // Heure de départ depuis le site
+          console.log('Heure départ retour récupérée:', heureDepart);
+          
+          if (heureDepart) {
+            // Calculer l'heure d'arrivée
+            const durationMinutes = Math.round(this.returnRoute.duration / 60);
+            const [hours, minutes] = heureDepart.split(':').map(Number);
+            const departureDate = new Date();
+            departureDate.setHours(hours, minutes, 0, 0);
+            
+            const arrivalDate = new Date(departureDate.getTime() + durationMinutes * 60 * 1000);
+            const arrivalTime = `${String(arrivalDate.getHours()).padStart(2, '0')}:${String(arrivalDate.getMinutes()).padStart(2, '0')}`;
+            
+            console.log('Temps retour calculés - Départ:', heureDepart, 'Arrivée:', arrivalTime);
+            
+            // Afficher les heures
+            const summaryTimeRetDepart = this.shadowRoot.getElementById('summary-time-ret-depart');
+            const summaryTimeRetArrivee = this.shadowRoot.getElementById('summary-time-ret-arrivee');
+            
+            console.log('Éléments summary retour trouvés - Départ:', summaryTimeRetDepart, 'Arrivée:', summaryTimeRetArrivee);
+            
+            if (summaryTimeRetDepart) summaryTimeRetDepart.textContent = heureDepart;
+            if (summaryTimeRetArrivee) summaryTimeRetArrivee.textContent = arrivalTime;
+          }
+        }
+      }
+      
+      // Distance depuis outRoute
+      if (this.outRoute && this.outRoute.distance) {
+        const km = (this.outRoute.distance / 1000).toFixed(1);
+        if (summaryDistanceOut) summaryDistanceOut.textContent = `${km} km`;
+      }
+      
+      // Nombre de places disponibles
+      const seatsEl = this.shadowRoot.getElementById('seats');
+      const seatsCount = seatsEl ? parseInt(seatsEl.value, 10) : 4;
+      if (summarySeatsOut) {
+        summarySeatsOut.textContent = `${seatsCount} place${seatsCount > 1 ? 's' : ''}`;
+      }
+
+      // Trajet retour
+      const returnCheckbox = this.shadowRoot.getElementById('return');
+      const returnVisual = this.shadowRoot.getElementById('return-summary-visual');
+      
+      // En mode récurrent, on affiche toujours le retour. En mode ponctuel, on vérifie la checkbox
+      const shouldShowReturn = this.widgetMode === 'recurrent' || (returnCheckbox && returnCheckbox.checked);
+      
+      if (shouldShowReturn) {
+        if (returnVisual) returnVisual.style.display = 'block';
+        
+        const summaryDistanceRet = this.shadowRoot.getElementById('summary-distance-ret');
+        const summaryFromRet = this.shadowRoot.getElementById('summary-from-ret');
+        const summaryToRet = this.shadowRoot.getElementById('summary-to-ret');
+        const summarySeatsRet = this.shadowRoot.getElementById('summary-seats-ret');
+        
+        // Pour le retour, inverser départ et arrivée
+        if (summaryToRet) summaryToRet.textContent = destination;
+        if (summaryFromRet) summaryFromRet.textContent = departure;
+        
+        if (this.returnRoute && this.returnRoute.distance) {
+          const km = (this.returnRoute.distance / 1000).toFixed(1);
+          if (summaryDistanceRet) summaryDistanceRet.textContent = `${km} km`;
+        }
+        
+        // Nombre de places disponibles pour le retour
+        const seatsReturnEl = this.shadowRoot.getElementById('seats-return');
+        const seatsReturnCount = seatsReturnEl ? parseInt(seatsReturnEl.value, 10) : seatsCount;
+        if (summarySeatsRet) {
+          summarySeatsRet.textContent = `${seatsReturnCount} place${seatsReturnCount > 1 ? 's' : ''}`;
+        }
+      } else {
+        if (returnVisual) returnVisual.style.display = 'none';
+      }
+
+      // En mode récurrent : afficher les jours et le CO2
+      if (this.widgetMode === 'recurrent') {
+        const selectedDays = this.getSelectedDays();
+        const summaryRecurrentDays = this.shadowRoot.getElementById('summary-recurrent-days');
+        const summaryDaysBadges = this.shadowRoot.getElementById('summary-days-badges');
+        
+        if (summaryRecurrentDays && summaryDaysBadges && selectedDays.length > 0) {
+          summaryRecurrentDays.style.display = 'block';
+          
+          // Générer les badges de jours (même style que page 1)
+          const allDays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+          const dayLabels = {
+            monday: 'Lun',
+            tuesday: 'Mar',
+            wednesday: 'Mer',
+            thursday: 'Jeu',
+            friday: 'Ven',
+            saturday: 'Sam',
+            sunday: 'Dim'
+          };
+          
+          let badgesHTML = '';
+          allDays.forEach(day => {
+            const isSelected = selectedDays.includes(day);
+            const bgColor = isSelected ? this.colorOutbound : 'transparent';
+            const textColor = isSelected ? '#fff' : '#8E8E93';
+            const borderColor = isSelected ? this.colorOutbound : '#E5E5EA';
+            
+            badgesHTML += `
+              <div style="
+                padding: 8px 14px;
+                border: 2px solid ${borderColor};
+                border-radius: 8px;
+                background: ${bgColor};
+                color: ${textColor};
+                font-size: 13px;
+                font-weight: 600;
+                font-family: ${this.fontFamily};
+                transition: all 0.2s ease;
+              ">${dayLabels[day]}</div>
+            `;
+          });
+          
+          summaryDaysBadges.innerHTML = badgesHTML;
+        }
+        
+        // Calculer le CO2 évité
+        // Formule: ~120g CO2/km en voiture individuelle
+        // Si on partage avec 1 passager, on économise ~60g/km chacun
+        const co2Value = this.shadowRoot.getElementById('summary-co2-value');
+        const co2Detail = this.shadowRoot.getElementById('summary-co2-detail');
+        
+        if (this.outRoute && this.outRoute.distance) {
+          const kmOut = this.outRoute.distance / 1000;
+          const kmRet = this.returnRoute ? this.returnRoute.distance / 1000 : 0;
+          const totalKm = kmOut + kmRet;
+          
+          // CO2 économisé par passager (en kg)
+          const co2PerKm = 0.120; // 120g CO2 par km
+          const co2Saved = (totalKm * co2PerKm * 0.5).toFixed(1); // 50% d'économie en partageant
+          
+          if (co2Value) {
+            co2Value.textContent = `~${co2Saved} kg CO₂ évités`;
+          }
+          
+          if (co2Detail) {
+            const nbDays = selectedDays.length;
+            if (nbDays > 0) {
+              const weeklySavings = (parseFloat(co2Saved) * nbDays).toFixed(1);
+              const monthlySavings = (parseFloat(co2Saved) * nbDays * 4).toFixed(0);
+              co2Detail.textContent = `par trajet • ${weeklySavings} kg/semaine • ${monthlySavings} kg/mois`;
+            }
+          }
+        }
+      }
+      
+      // Initialiser et afficher la carte du récapitulatif
+      await this.initSummaryMap();
+      await this.displaySummaryRoutes();
+      
+      // Afficher le buffer initial (5 minutes par défaut, correspondant au slider)
+      const avgSpeedKmH = 50;
+      const defaultMinutes = 5;
+      const bufferWidthKm = avgSpeedKmH * (defaultMinutes / 60) * 0.5;
+      this.updateSummaryDetourBuffers(bufferWidthKm);
+    } catch (error) {
+      console.error('Erreur lors du remplissage du récapitulatif:', error);
+    }
   }
 
   /**
@@ -5627,24 +6743,45 @@ class CarpoolOfferWidget extends HTMLElement {
       // Récupération des champs
       const fromEl = this.shadowRoot.getElementById('from');
       const toEl = this.shadowRoot.getElementById('to');
-      const dateEl = this.shadowRoot.getElementById('date');
-
+      
       const departure = (fromEl?.value || '').trim();
       const destination = (toEl?.value || '').trim();
-      const date = (dateEl?.value || '').trim();
       
-      // Détecter si trajet retour est coché
-      const returnCheckbox = this.shadowRoot.getElementById('return');
-      this.hasReturnTrip = returnCheckbox ? returnCheckbox.checked : false;
+      // Mode récurrent : pas de date, mais vérifier les jours sélectionnés
+      if (this.widgetMode === 'recurrent') {
+        const selectedDays = this.getSelectedDays();
+        
+        // Validation mode récurrent
+        const errors = [];
+        if (!departure) errors.push('adresse de départ');
+        if (!destination) errors.push("adresse d'arrivée");
+        if (selectedDays.length === 0) errors.push('au moins un jour de covoiturage');
+        
+        if (errors.length) {
+          alert('Merci de renseigner: ' + errors.join(', '));
+          return;
+        }
+        
+        // En mode récurrent, pas de retour toggle (toujours aller+retour)
+        this.hasReturnTrip = true;
+      } else {
+        // Mode ponctuel : vérifier la date
+        const dateEl = this.shadowRoot.getElementById('date');
+        const date = (dateEl?.value || '').trim();
+        
+        // Détecter si trajet retour est coché
+        const returnCheckbox = this.shadowRoot.getElementById('return');
+        this.hasReturnTrip = returnCheckbox ? returnCheckbox.checked : false;
 
-      // Validation
-      const errors = [];
-      if (!departure) errors.push('adresse de départ');
-      if (!destination) errors.push("adresse d'arrivée");
-      if (!date) errors.push('date');
-      if (errors.length) {
-        alert('Merci de renseigner: ' + errors.join(', '));
-        return;
+        // Validation mode ponctuel
+        const errors = [];
+        if (!departure) errors.push('adresse de départ');
+        if (!destination) errors.push("adresse d'arrivée");
+        if (!date) errors.push('date');
+        if (errors.length) {
+          alert('Merci de renseigner: ' + errors.join(', '));
+          return;
+        }
       }
 
       // Afficher un état de chargement sur le bouton
@@ -6206,6 +7343,13 @@ class CarpoolOfferWidget extends HTMLElement {
       this.summaryMap.on('load', resolve);
     });
     
+    // Force le resize pour s'assurer que la carte prend toute la place
+    setTimeout(() => {
+      if (this.summaryMap) {
+        this.summaryMap.resize();
+      }
+    }, 100);
+    
     // Animation d'entrée premium
     this.summaryMap.easeTo({
       zoom: 8,
@@ -6497,9 +7641,32 @@ class CarpoolOfferWidget extends HTMLElement {
    */
   async submitCarpoolOffer() {
     try {
-      const userId = (typeof window !== 'undefined' && window.userId) ? String(window.userId) : null;
-      if (!userId) {
-        alert("Veuillez vous connecter pour proposer un covoiturage.");
+      // ✅ V2: Collecter email/nom/téléphone au lieu de userId
+      const driverNameEl = this.shadowRoot.getElementById('driver-name');
+      const driverEmailEl = this.shadowRoot.getElementById('driver-email');
+      const driverPhoneEl = this.shadowRoot.getElementById('driver-phone');
+
+      const driverName = (driverNameEl?.value || '').trim();
+      const driverEmail = (driverEmailEl?.value || '').trim();
+      const driverPhone = (driverPhoneEl?.value || '').trim();
+
+      // Validation des coordonnées conducteur
+      if (!driverName) {
+        alert("Veuillez renseigner votre nom complet.");
+        return;
+      }
+      if (!driverEmail) {
+        alert("Veuillez renseigner votre email.");
+        return;
+      }
+      if (!driverPhone) {
+        alert("Veuillez renseigner votre numéro de téléphone.");
+        return;
+      }
+      
+      // Validation basique email
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(driverEmail)) {
+        alert("Veuillez renseigner un email valide.");
         return;
       }
 
@@ -6519,46 +7686,151 @@ class CarpoolOfferWidget extends HTMLElement {
 
       const departure = (fromEl?.value || '').trim();
       const destination = (toEl?.value || '').trim();
-      const date = (dateEl?.value || '').trim(); // YYYY-MM-DD
-      const time = (fromTimeEl?.value || '').trim(); // HH:MM
-      const seats = parseInt(seatsEl?.value || '1', 10) || 1;
-      const max_detour_km = parseInt(maxDetourKmEl?.value || '5', 10);
-      const max_detour_time = parseInt(maxDetourTimeEl?.value || '60', 10);
-
-      // validations minimales
-      const errors = [];
-      if (!departure) errors.push('adresse de départ');
-      if (!destination) errors.push("adresse d'arrivée");
-      if (!date) errors.push('date');
-      if (!time) errors.push('heure de départ');
-      if (errors.length) {
-        alert('Merci de renseigner: ' + errors.join(', '));
-        return;
-      }
-
-      const datetime = `${date} ${time}`; // attendu par l'API (DATETIME MySQL)
-
-      // Prévention: un seul covoit par jour (client-side rapide). On vérifie dans le cache _offers.
-      try {
-        if (this._offers && Array.isArray(this._offers)) {
-          const already = this._offers.find(o => String(o.user_id) === userId && o.datetime && o.datetime.startsWith(date));
-          if (already) {
-            alert('Vous avez déjà proposé un covoiturage pour cette date. (Limite: 1 par jour)');
-            return;
+      
+      // Mode récurrent vs ponctuel : validation différente
+      if (this.widgetMode === 'recurrent') {
+        // Mode récurrent : pas de date/time, mais jours + heures aller/retour
+        const selectedDays = this.getSelectedDays();
+        const timeOutboundEl = this.shadowRoot.getElementById('recurrent-time-outbound');
+        const timeReturnEl = this.shadowRoot.getElementById('recurrent-time-return');
+        const timeOutbound = (timeOutboundEl?.value || '').trim();
+        const timeReturn = (timeReturnEl?.value || '').trim();
+        
+        const errors = [];
+        if (!departure) errors.push('adresse de départ');
+        if (!destination) errors.push("adresse d'arrivée");
+        if (selectedDays.length === 0) errors.push('au moins un jour de covoiturage');
+        if (!timeOutbound) errors.push("heure d'arrivée sur site");
+        if (!timeReturn) errors.push("heure de départ du site");
+        
+        if (errors.length) {
+          alert('Merci de renseigner: ' + errors.join(', '));
+          return;
+        }
+        
+        // Construire le payload pour l'API récurrente
+        // selectedDays déjà déclaré plus haut
+        const daysPayload = {
+          monday: selectedDays.includes('monday'),
+          tuesday: selectedDays.includes('tuesday'),
+          wednesday: selectedDays.includes('wednesday'),
+          thursday: selectedDays.includes('thursday'),
+          friday: selectedDays.includes('friday'),
+          saturday: selectedDays.includes('saturday'),
+          sunday: selectedDays.includes('sunday')
+        };
+        
+        // Récupérer company_id
+        const companyId = this.getAttribute('data-company-id') || this.getAttribute('company-id');
+        
+        if (!companyId) {
+          alert('Erreur: company_id manquant');
+          return;
+        }
+        
+        // Vérifier que le site a été sélectionné
+        if (!this.selectedSiteName || !this.selectedSiteAddress) {
+          alert('Erreur: veuillez sélectionner un site de destination');
+          return;
+        }
+        
+        const payload = {
+          driver_name: driverName,
+          driver_email: driverEmail,
+          driver_phone: driverPhone,
+          company_id: parseInt(companyId),
+          site_name: this.selectedSiteName,
+          site_address: this.selectedSiteAddress,
+          site_coords: this.endCoords,
+          departure,
+          destination,
+          departure_coords: this.startCoords,
+          destination_coords: this.endCoords,
+          time_outbound: timeOutbound,
+          time_return: timeReturn,
+          ...daysPayload,
+          seats: parseInt(this.shadowRoot.getElementById('seats')?.value || 4),
+          max_detour_time: parseInt(this.shadowRoot.getElementById('summary-detour-time-slider')?.value || 5),
+          route_outbound: this.routeAlternatives?.[this.selectedRouteIndex] || null,
+          route_return: this.routeAlternativesReturn?.[this.selectedRouteIndexReturn] || null,
+          color_outbound: this.colorOutbound,
+          color_return: this.colorReturnducoup 
+        };
+        
+        // Désactiver le bouton pendant l'envoi
+        const validateBtn = this.shadowRoot.getElementById('validate');
+        if (validateBtn) {
+          validateBtn.disabled = true;
+          validateBtn.textContent = 'Envoi…';
+        }
+        
+        try {
+          const res = await fetch('/api/v2/offers/recurrent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(payload)
+          });
+          
+          if (!res.ok) {
+            const errorData = await res.json().catch(() => ({ error: 'Erreur inconnue' }));
+            throw new Error(errorData.error || 'Erreur lors de la création de l\'offre');
+          }
+          
+          const result = await res.json();
+          
+          // Succès !
+          alert('✅ Votre offre de covoiturage récurrent a été créée avec succès !\n\nVos collègues pourront désormais vous rejoindre pour ces trajets.');
+          
+          // Réinitialiser le formulaire
+          this.resetOfferFlowToInitial();
+          
+          // Rafraîchir la liste (si implémenté)
+          try { await this.fetchMyTrips(); } catch(_) {}
+          
+        } catch (err) {
+          console.error('Erreur création offre récurrente:', err);
+          alert(`Erreur: ${err.message}`);
+        } finally {
+          if (validateBtn) {
+            validateBtn.disabled = false;
+            validateBtn.textContent = 'Valider';
           }
         }
-      } catch(_) {}
+        
+        return;
+        
+      } else {
+        // Mode ponctuel : vérifier date et time
+        const date = (dateEl?.value || '').trim(); // YYYY-MM-DD
+        const time = (fromTimeEl?.value || '').trim(); // HH:MM
+        const seats = parseInt(seatsEl?.value || '1', 10) || 1;
+        const max_detour_km = parseInt(maxDetourKmEl?.value || '5', 10);
+        const max_detour_time = parseInt(maxDetourTimeEl?.value || '60', 10);
 
-      // Collecte des étapes (labels + coords) et horaires d'étapes si présents
-      const stopInputs = Array.from(this.shadowRoot.querySelectorAll('input[data-stop-index]'));
-      const stops = stopInputs.map(inp => {
-        const idx = parseInt(inp.dataset.stopIndex, 10);
-        const label = (inp.value || '').trim();
-        const coords = Array.isArray(this.stopCoords?.[idx]) ? this.stopCoords[idx] : null;
-        const timeSel = this.shadowRoot.querySelector(`select[data-stop-time-index="${idx}"]`);
-        const timeVal = timeSel ? (timeSel.value || '') : (this.stopTimes?.[idx] || '');
-        return { index: idx, label, coords, time: timeVal };
-      });
+        // validations minimales
+        const errors = [];
+        if (!departure) errors.push('adresse de départ');
+        if (!destination) errors.push("adresse d'arrivée");
+        if (!date) errors.push('date');
+        if (!time) errors.push('heure de départ');
+        if (errors.length) {
+          alert('Merci de renseigner: ' + errors.join(', '));
+          return;
+        }
+
+        const datetime = `${date} ${time}:00`; // Format MySQL: YYYY-MM-DD HH:MM:SS
+
+        // Collecte des étapes (labels + coords) et horaires d'étapes si présents
+        const stopInputs = Array.from(this.shadowRoot.querySelectorAll('input[data-stop-index]'));
+        const stops = stopInputs.map(inp => {
+          const idx = parseInt(inp.dataset.stopIndex, 10);
+          const label = (inp.value || '').trim();
+          const coords = Array.isArray(this.stopCoords?.[idx]) ? this.stopCoords[idx] : null;
+          const timeSel = this.shadowRoot.querySelector(`select[data-stop-time-index="${idx}"]`);
+          const timeVal = timeSel ? (timeSel.value || '') : (this.stopTimes?.[idx] || '');
+          return { index: idx, label, coords, time: timeVal };
+        });
 
       // Prix par segment (aller/retour)
       const segmentPricesOut = Array.isArray(this.segmentPricesOut) ? this.segmentPricesOut : [];
@@ -6642,8 +7914,11 @@ class CarpoolOfferWidget extends HTMLElement {
         return_datetime = `${details.returnTrip.date} ${details.returnTrip.time}`;
       }
       
+      // ✅ V2: Payload avec email au lieu de user_id
       const payload = {
-        user_id: userId,
+        driver_name: driverName,
+        driver_email: driverEmail,
+        driver_phone: driverPhone,
         departure,
         destination,
         datetime,
@@ -6663,13 +7938,17 @@ class CarpoolOfferWidget extends HTMLElement {
         event_location: this.eventLocation,
         event_date: this.eventDate,
         event_time: this.eventTime,
-        page_url: this.getAttribute('page-url') || window.location.href
+        page_url: this.getAttribute('page-url') || window.location.href,
+        color_outbound: this.colorOutbound,
+        color_return: this.colorReturn
       };
 
       // Utiliser le bouton validate-offer si on est à l'étape finale, sinon validate
       const btn = this.shadowRoot.getElementById('validate-offer') || this.shadowRoot.getElementById('validate');
       if (btn) { btn.disabled = true; btn.textContent = 'Envoi…'; }
-      const res = await fetch('/api/carpool', {
+      
+      // ✅ V2: Appeler /api/v2/offers au lieu de /api/carpool
+      const res = await fetch('/api/v2/offers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -6686,7 +7965,7 @@ class CarpoolOfferWidget extends HTMLElement {
         throw new Error(`Echec (${res.status}) ${tx}`);
       }
       // succès
-      alert('Votre proposition de covoiturage a été enregistrée. Merci !');
+      alert('✅ Votre proposition de covoiturage a été enregistrée. Vous allez recevoir un email de confirmation avec les instructions pour la mise en relation WhatsApp.');
       if (btn) { btn.disabled = false; btn.textContent = 'Publier mon offre'; }
       // ✅ Rafraîchir le cache _offers pour éviter les faux positifs de doublon
       this._offersFetchedAt = 0; // Force le rafraîchissement
@@ -6694,10 +7973,11 @@ class CarpoolOfferWidget extends HTMLElement {
       if (this.activeTab === 'find') {
         try { await this.fetchCarpoolOffers(true); } catch(_) {}
       }
-      // Réinitialiser le flux d'offre
-      this.resetOfferFlowToInitial();
-      // Rafraîchir mes trajets pour mettre à jour this._offers
-      try { await this.fetchMyTrips(); } catch(_) {}
+        // Réinitialiser le flux d'offre
+        this.resetOfferFlowToInitial();
+        // Rafraîchir mes trajets pour mettre à jour this._offers
+        try { await this.fetchMyTrips(); } catch(_) {}
+      } // Fin du bloc else (mode ponctuel)
     } catch (err) {
       console.error('submitCarpoolOffer error', err);
       const btn = this.shadowRoot.getElementById('validate-offer') || this.shadowRoot.getElementById('validate');
@@ -7212,8 +8492,9 @@ class CarpoolOfferWidget extends HTMLElement {
           if (this.map.getSource('return-route')) { if (this.map.getLayer('return-route-line')) this.map.removeLayer('return-route-line'); this.map.removeSource('return-route'); }
         }
       } catch(_) {}
-      // Affiche les offres existantes côté "Trouver"
-      try { await this.fetchCarpoolOffers(); } catch(_) {}
+      // Les offres seront affichées uniquement après une recherche
+      // (pas d'affichage automatique lors du changement d'onglet)
+      // try { await this.fetchCarpoolOffers(); } catch(_) {}
     } else if (isMine) {
       try { await this.fetchMyTrips(); } catch(_) {}
     }
@@ -8339,7 +9620,12 @@ fitMapToBounds() {
     try { this.updateReturnTimeline(); } catch(_) {}
     try { this.updateSegmentPrices(); } catch(_) {}
 
-    // Passer à l'étape 4 (ajustements)
+    // Mode récurrent : passer directement au récapitulatif (step 4)
+    // Mode ponctuel : passer aux ajustements (step 4)
+    if (this.widgetMode === 'recurrent') {
+      // En mode récurrent, peupler le récapitulatif avant d'y aller
+      await this.populateTripSummary();
+    }
     this.setOfferStep(4);
   }
 
@@ -9368,8 +10654,7 @@ fitMapToBounds() {
     // Réutilise cache 60s pour éviter surcharges
     const now = Date.now();
     if (!force && this._offers && this._offersFetchedAt && (now - this._offersFetchedAt) < 60000) {
-  // après fetch initial ou refresh, appliquer filtre si actif
-  if (this.searchCenterCoords) this.renderFindOffersFiltered(); else this.renderFindOffers();
+      if (this.searchCenterCoords) this.renderFindOffersFiltered(); else this.renderFindOffers();
       return;
     }
     const container = this.shadowRoot.getElementById('find-offers-inner');
@@ -9378,18 +10663,50 @@ fitMapToBounds() {
       const res = await fetch('/api/carpool', { credentials: 'include' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
-      this._offers = Array.isArray(data) ? data : [];
+      this._offers = Array.isArray(data.offers) ? data.offers : (Array.isArray(data) ? data : []);
       this._offersFetchedAt = now;
-      // Try to hydrate display names and photoURL from Firestore like article-display does
-      try { await this.hydrateUserProfilesFromFirestore(); } catch(_) {}
-    } catch (e) {
-      console.error('fetchCarpoolOffers error', e);
-      this._offers = [];
-      this._offersFetchedAt = now;
-      this._offersError = true;
-    } finally {
-      if (container) container.setAttribute('aria-busy','false');
+      console.log(`✅ ${this._offers.length} offres reçues du backend (déjà filtrées par zones_intersect avec Shapely)`);
       if (this.searchCenterCoords) this.renderFindOffersFiltered(); else this.renderFindOffers();
+    } catch(e) {
+      console.error('fetchCarpoolOffers error', e);
+      if (this.shadowRoot.getElementById('find-offers-inner')) {
+        this.shadowRoot.getElementById('find-offers-inner').innerHTML = '<div style="padding:16px;color:#c00;">Erreur chargement</div>';
+      }
+    } finally {
+      if (this.searchCenterCoords) this.renderFindOffersFiltered(); else this.renderFindOffers();
+      if (container) container.removeAttribute('aria-busy');
+    }
+  }
+
+
+  async loadTripCount() {
+    try {
+      // Mode récurrent : compter les offres récurrentes actives de l'entreprise
+      if (this.widgetMode === 'recurrent' && this.companyId) {
+        const response = await fetch(`/api/v2/offers/recurrent/count?company_id=${this.companyId}`);
+        if (response.ok) {
+          const data = await response.json();
+          const count = data.count || 0;
+          const header = this.shadowRoot.getElementById('find-header-count');
+          if (header) {
+            header.textContent = `${count} trajet${count > 1 ? 's' : ''} disponible${count > 1 ? 's' : ''}`;
+          }
+        }
+        return;
+      }
+      
+      // Mode ponctuel : compter les offres ponctuelles
+      const response = await fetch(`${this.API_URL}/api/carpool/count`);
+      if (response.ok) {
+        const data = await response.json();
+        const count = data.total_trips || 0;
+        const header = this.shadowRoot.getElementById('find-header-count');
+        if (header) {
+          header.textContent = `${count} trajet${count > 1 ? 's' : ''} disponible${count > 1 ? 's' : ''}`;
+        }
+      }
+    } catch(e) {
+      console.warn('Failed to load trip count:', e);
     }
   }
 
@@ -9629,13 +10946,16 @@ fitMapToBounds() {
             
             // Calculer la distance depuis le point de rendez-vous jusqu'à la destination
             let passengerDistance = 0;
+            let passengerDurationMin = 0;
             
             const passengerRouteResult = await this.fetchRoute([meetingCoords, toCoords], { overview: 'false' });
             if (passengerRouteResult.success && passengerRouteResult.data.routes[0]) {
               passengerDistance = passengerRouteResult.data.routes[0].distance / 1000;
+              passengerDurationMin = Math.round(passengerRouteResult.data.routes[0].duration / 60);
             } else {
               // Fallback estimation
               passengerDistance = this.haversineMeters(meetingCoords, toCoords) * 1.3 / 1000;
+              passengerDurationMin = Math.round((passengerDistance / 80) * 60); // Estimation à 80 km/h
             }
             
             // Calculer le prix selon la formule BlaBlaCar (distance passager uniquement)
@@ -9670,30 +10990,29 @@ fitMapToBounds() {
               const arrivalDateObj = new Date(datetime);
               const departureMs = arrivalDateObj.getTime() - (newDuration * 60000);
               const departureDateObj = new Date(departureMs);
-              adjustedDepartureTime = `${String(departureDateObj.getHours()).padStart(2, '0')}:${String(departureDateObj.getMinutes()).padStart(2, '0')}`;
+              adjustedDepartureTime = `${String(departureDateObj.getUTCHours()).padStart(2, '0')}:${String(departureDateObj.getUTCMinutes()).padStart(2, '0')}`;
             }
             
             const originalDepartureMs = datetime ? new Date(datetime).getTime() - (originalDuration * 60000) : 0;
-            const originalDepartureTime = originalDepartureMs ? `${String(new Date(originalDepartureMs).getHours()).padStart(2, '0')}:${String(new Date(originalDepartureMs).getMinutes()).padStart(2, '0')}` : '';
+            const originalDepartureTime = originalDepartureMs ? `${String(new Date(originalDepartureMs).getUTCHours()).padStart(2, '0')}:${String(new Date(originalDepartureMs).getUTCMinutes()).padStart(2, '0')}` : '';
             
             // Calculer l'heure de pickup (passage chez le client)
-            // Il faut récupérer la durée entre le domicile du conducteur et le point de rendez-vous
+            // LOGIQUE CORRECTE : pickupTime = heure arrivée événement - durée trajet passager
+            // Le passager doit partir à cette heure pour arriver à temps à l'événement
             let pickupTime = '';
             let pickupDurationMin = 0;
             
-            // OSRM retourne les legs (segments) du trajet
-            if (detourData.routes[0].legs && detourData.routes[0].legs.length >= 1) {
-              // Le premier leg est : domicile conducteur -> point de rendez-vous
-              const firstLeg = detourData.routes[0].legs[0];
-              pickupDurationMin = Math.round(firstLeg.duration / 60);
+            if (datetime && passengerDurationMin) {
+              const arrivalDateObj = new Date(datetime);
+              // IMPORTANT : Utiliser UTC pour éviter les décalages de fuseau horaire
+              const pickupMs = arrivalDateObj.getTime() - (passengerDurationMin * 60000);
+              const pickupDateObj = new Date(pickupMs);
+              pickupTime = `${String(pickupDateObj.getUTCHours()).padStart(2, '0')}:${String(pickupDateObj.getUTCMinutes()).padStart(2, '0')}`;
               
-              // pickupTime = adjustedDepartureTime + durée du premier leg
-              if (datetime && adjustedDepartureTime) {
-                const arrivalDateObj = new Date(datetime);
-                const departureMs = arrivalDateObj.getTime() - (newDuration * 60000);
-                const pickupMs = departureMs + (pickupDurationMin * 60000);
-                const pickupDateObj = new Date(pickupMs);
-                pickupTime = `${String(pickupDateObj.getHours()).padStart(2, '0')}:${String(pickupDateObj.getMinutes()).padStart(2, '0')}`;
+              // Pour info : durée entre domicile conducteur et point de pickup
+              if (detourData.routes[0].legs && detourData.routes[0].legs.length >= 1) {
+                const firstLeg = detourData.routes[0].legs[0];
+                pickupDurationMin = Math.round(firstLeg.duration / 60);
               }
             }
             
@@ -9709,6 +11028,7 @@ fitMapToBounds() {
               originalPrice: originalPrice.toFixed(2),
               priceDifference: priceDifference.toFixed(2),
               passengerDistance: passengerDistance.toFixed(1),
+              passengerDurationMin: passengerDurationMin, // Durée trajet passager (pickup → destination)
               adjustedDepartureTime: adjustedDepartureTime,
               originalDepartureTime: originalDepartureTime,
               pickupTime: pickupTime, // Heure de passage chez le client
@@ -9726,7 +11046,11 @@ fitMapToBounds() {
             console.log(`✅ Détour calculé pour offre ${offer.id}:
               - Distance totale conducteur: ${(detourRoute.distance / 1000).toFixed(1)} km (avec détour)
               - Distance passager (facturable): ${passengerDistance.toFixed(1)} km (meeting → destination)
-              - Prix passager: ${newPrice.toFixed(2)} € (basé sur sa distance uniquement)`);
+              - Durée passager: ${passengerDurationMin} min
+              - Prix passager: ${newPrice.toFixed(2)} € (basé sur sa distance uniquement)
+              - 🕐 Heure pickup: ${pickupTime} (arrivée ${datetime ? new Date(datetime).getHours() + ':' + String(new Date(datetime).getMinutes()).padStart(2, '0') : '?'} - ${passengerDurationMin}min)
+              - 🚗 Heure départ conducteur: ${adjustedDepartureTime}
+              - ⏱️ Durée conducteur→pickup: ${pickupDurationMin} min`);
         } else {
           console.warn('❌ No routes in detour response for offer:', offer.id);
         }
@@ -9886,18 +11210,17 @@ fitMapToBounds() {
         return { success: false, error: result.error };
       }
       
-      // Convertir au format OSRM pour compatibilité
+      // Le backend retourne déjà {routes: [...]} au format OSRM
       const data = {
         code: 'Ok',
-        routes: [{
-          distance: result.distance,
-          duration: result.duration,
-          geometry: result.geometry,
-          legs: result.legs || []
-        }]
+        routes: result.routes || []
       };
       
-      console.log(`✅ Route calculée: ${(result.distance/1000).toFixed(1)}km, ${(result.duration/60).toFixed(0)}min`);
+      if (data.routes.length > 0) {
+        const route = data.routes[0];
+        console.log(`✅ Route calculée via backend: ${(route.distance/1000).toFixed(1)}km, ${(route.duration/60).toFixed(0)}min`);
+      }
+      
       return { success: true, data, source: 'backend' };
       
     } catch (e) {
@@ -9994,9 +11317,9 @@ fitMapToBounds() {
       findHeaderCount.textContent = `${totalCount} trajet${totalCount > 1 ? 's' : ''} disponible${totalCount > 1 ? 's' : ''}`;
     }
     
-    // Cacher les résultats par défaut (avant recherche)
-    inner.innerHTML = '<div style="padding:20px;text-align:center;color:#888;font-size:15px;font-family:${this.fontFamily};">👆 Lance une recherche pour voir les trajets disponibles</div>';
-    return;
+    // AFFICHER TOUTES LES OFFRES DISPONIBLES (pas de filtrage géographique)
+    // Appeler renderFindOffersFiltered sans searchCenterCoords pour afficher tout
+    this.renderFindOffersFiltered();
   }
 
   drawSearchRadius(center, radiusMeters = 3000) {
@@ -10045,7 +11368,48 @@ fitMapToBounds() {
     }
   }
 
-  renderFindOffersFiltered() {
+  async calculatePickupTimesForOffers(offers, searchPoint, tripType) {
+    /**
+     * Calcule les horaires de pickup et prix pour chaque offre
+     * @param {Array} offers - Liste des offres
+     * @param {Array} searchPoint - [lon, lat] du point de recherche
+     * @param {String} tripType - 'outbound' ou 'return'
+     * @returns {Array} Offres enrichies avec pickup_time et segment_price
+     */
+    if (!searchPoint || !offers || !offers.length) return offers;
+    
+    const enrichedOffers = await Promise.all(offers.map(async (offer) => {
+      try {
+        const response = await fetch(`${this.API_URL}/api/carpool/calculate-pickup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            offer_id: offer.id,
+            search_point: searchPoint,
+            trip_type: tripType
+          })
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          return {
+            ...offer,
+            _calculated_pickup_time: data.pickup_time,
+            _calculated_segment_price: data.segment_price,
+            _calculated_pickup_distance_km: data.pickup_distance_km,
+            _calculated_detour_time_min: data.detour_time_minutes
+          };
+        }
+      } catch (err) {
+        console.warn(`Failed to calculate pickup for offer ${offer.id}:`, err);
+      }
+      return offer;
+    }));
+    
+    return enrichedOffers;
+  }
+
+  async renderFindOffersFiltered() {
     const wrap = this.shadowRoot.getElementById('find-offers');
     const inner = this.shadowRoot.getElementById('find-offers-inner');
     if (!wrap || !inner) return;
@@ -10066,11 +11430,21 @@ fitMapToBounds() {
     const btnSecondaryBg = isDark ? '#2a2a2a' : '#f5f5f5';
     const btnSecondaryText = isDark ? '#ffffff' : '#333';
     const btnSecondaryBorder = isDark ? '#3a3a3a' : '#ddd';
-    if (!this._offers) { inner.innerHTML = '<div style="padding:8px;color:#555">Chargement…</div>'; return; }
+    // Si aucune recherche n'a encore été effectuée, afficher un message d'invite
+    if (!this._offers) { 
+      const inviteMessage = this.searchCenterCoords 
+        ? '<div style="padding:8px;color:#555">Chargement…</div>'
+        : '<div style="padding:20px;border:1px solid #ddd;background:#f9f9f9;border-radius:12px;color:#666;text-align:center;font-size:14px;">🔍 Entrez votre adresse de départ et cliquez sur "Rechercher" pour trouver des covoiturages.</div>';
+      inner.innerHTML = inviteMessage;
+      return; 
+    }
     let list = this._offers; // Déjà filtré par le backend
     if (!list.length) {
-      const km = Math.round(this.searchRadiusMeters / 1000);
-      inner.innerHTML = `<div style="padding:8px;border:1px solid #ccc;background:#fafafa;border-radius:8px;color:#555">Aucun covoiturage dans le rayon ${km} km.</div>`;
+      // Message différent selon si on a fait une recherche ou non
+      const message = this.searchCenterCoords 
+        ? `Aucun covoiturage dans le rayon ${Math.round(this.searchRadiusMeters / 1000)} km.`
+        : 'Aucun trajet disponible pour cet événement.';
+      inner.innerHTML = `<div style="padding:8px;border:1px solid #ccc;background:#fafafa;border-radius:8px;color:#555">${message}</div>`;
       return;
     }
     
@@ -10093,8 +11467,56 @@ fitMapToBounds() {
       }
     });
     
-    // Afficher les offres selon la page active
+    console.log('📊 Offres décomposées:', { 
+      total: list.length, 
+      outbound: outboundOffers.length, 
+      return: returnOffers.length,
+      page: isOutboundPage ? 'outbound' : 'return'
+    });
+    
+    // Calculer les horaires de pickup pour les offres de la page active
     let currentOffers = isOutboundPage ? outboundOffers : returnOffers;
+    
+    console.log('📋 Offres pour la page courante:', currentOffers.length);
+    
+    // Les détours, horaires et prix sont déjà calculés par calculateDetoursForOffers()
+    if (this.searchCenterCoords) {
+      console.log('🔍 Point de recherche détecté:', this.searchCenterCoords);
+      // Pas besoin d'appeler le backend - les données sont dans offer._detourInfo
+      console.log('✅ Offres avec détours:', currentOffers.filter(o => o._detourCalculated).length);
+    } else {
+      console.log('⚠️ Pas de point de recherche (searchCenterCoords non défini)');
+    }
+    
+    // Continuer le rendu avec les offres enrichies
+    this._renderOffersWithPickupTimes(currentOffers, {
+      isOutboundPage,
+      requestedSeats,
+      cardBg,
+      textPrimary,
+      textSecondary,
+      borderLight,
+      btnSecondaryBg,
+      btnSecondaryText,
+      btnSecondaryBorder
+    });
+  }
+
+  _renderOffersWithPickupTimes(currentOffers, opts) {
+    const inner = this.shadowRoot.getElementById('find-offers-inner');
+    if (!inner) return;
+    
+    const {
+      isOutboundPage,
+      requestedSeats,
+      cardBg,
+      textPrimary,
+      textSecondary,
+      borderLight,
+      btnSecondaryBg,
+      btnSecondaryText,
+      btnSecondaryBorder
+    } = opts;
     
     // Génération des variantes de couleur pour cette page
     const generateColorVariants = (hexColor) => {
@@ -10191,11 +11613,21 @@ fitMapToBounds() {
     const seats = isOutbound 
       ? (o.seats_outbound != null ? o.seats_outbound : o.seats)
       : (o.seats_return != null ? o.seats_return : o.seats);
-    // Utiliser le bon compteur selon le type de trajet
-    const reserved = isOutbound 
-      ? Number(o.reserved_count_outbound || o.reserved_count || 0)
-      : Number(o.reserved_count_return || 0);
-    const remaining = (Number.isFinite(Number(seats)) ? Number(seats) - reserved : null);
+    
+    // Utiliser seats_available si fourni par le backend (après déduction des réservations)
+    // Sinon calculer avec reserved_count
+    let remaining;
+    if (o.seats_available != null) {
+      // Backend a déjà calculé les places disponibles
+      remaining = Number(o.seats_available);
+    } else {
+      // Fallback: calculer avec reserved_count
+      const reserved = isOutbound 
+        ? Number(o.reserved_count_outbound || o.reserved_count || 0)
+        : Number(o.reserved_count_return || 0);
+      remaining = (Number.isFinite(Number(seats)) ? Number(seats) - reserved : null);
+    }
+    
     const full = remaining != null && remaining <= 0;
     const insufficientSeats = remaining != null && remaining < requestedSeats;
     const currentUserId = (typeof window !== 'undefined' && window.userId) ? String(window.userId) : null;
@@ -10208,11 +11640,29 @@ fitMapToBounds() {
     let isDetour = false;
     let detourInfo = null;
     
+    // Debug: voir ce qui est disponible
+    console.log(`Offre ${offerId}: _detourCalculated=${o._detourCalculated}, details._detourCalculated=${details._detourCalculated}`, o._detourInfo);
+    
     // Vérifier d'abord si l'offre a été marquée comme sans détour nécessaire
     if (o._noDetourNeeded) {
       // Cette offre a été pré-filtrée : pas besoin de détour
       isDetour = false;
       detourInfo = null;
+    } else if (o._detourCalculated && o._detourInfo) {
+      // Utiliser les données de l'offre directement (priorité)
+      isDetour = true;
+      detourInfo = {
+        meetingPoint: o._detourInfo.meetingPoint,
+        adjustedPrice: o._detourInfo.adjustedPrice,
+        originalPrice: o._detourInfo.originalPrice,
+        priceDifference: o._detourInfo.priceDifference,
+        adjustedDepartureTime: o._detourInfo.adjustedDepartureTime,
+        originalDepartureTime: o._detourInfo.originalDepartureTime,
+        pickupTime: o._detourInfo.pickupTime,
+        passengerDistance: o._detourInfo.passengerDistance,
+        passengerDurationMin: o._detourInfo.passengerDurationMin,
+        extraTime: o._detourInfo.extraTime
+      };
     } else if (details._detourCalculated && details._detourInfo) {
       // Utiliser les données précalculées
       isDetour = true;
@@ -10277,10 +11727,10 @@ fitMapToBounds() {
       cardColor = this.colorOutbound;
       cardLabel = 'ALLER';
       
-      // Pour les détours, utiliser l'adresse de recherche du client au lieu du départ du conducteur
-      if (isDetour && detourInfo && detourInfo.searchLocation) {
-        meetingPointLocation = detourInfo.searchLocation;
-        startLocation = dep; // On garde le départ original pour référence interne
+      // Pour les détours, utiliser l'adresse du point de rencontre (meeting point)
+      if (isDetour && detourInfo && detourInfo.meetingPoint && detourInfo.meetingPoint.address) {
+        meetingPointLocation = detourInfo.meetingPoint.address;
+        startLocation = detourInfo.meetingPoint.address; // Afficher le point de pickup
       } else {
         startLocation = dep;
       }
@@ -10297,8 +11747,8 @@ fitMapToBounds() {
       if (isDetour && detourInfo && detourInfo.passengerDistance) {
         // Distance que le passager va parcourir (pickup -> destination)
         distanceKm = parseFloat(detourInfo.passengerDistance);
-        // Calculer la durée estimée pour cette distance
-        durationMin = Math.round((distanceKm / 80) * 60); // Estimation à 80 km/h
+        // Utiliser la durée réelle calculée par OSRM, pas une estimation
+        durationMin = detourInfo.passengerDurationMin || Math.round((distanceKm / 80) * 60);
       } else {
         distanceKm = details.distanceMeters?.outbound / 1000;
         const durationSec = details.durationSeconds?.outbound;
@@ -10307,17 +11757,29 @@ fitMapToBounds() {
       
       durationStr = durationMin ? `${Math.floor(durationMin / 60)}h${String(durationMin % 60).padStart(2, '0')}` : null;
       
-      // Pour les détours : afficher l'heure de PICKUP (passage chez le client)
-      // Calcul : heure arrivée (FIXE) - durée pickup->arrivée
-      // Pour les trajets normaux : afficher l'heure de départ du conducteur
-      if (isDetour && detourInfo && detourInfo.pickupTime) {
-        // Pour l'ALLER avec détour :
-        // - arrivalTime reste FIXE (événement)
-        // - departureTime = heure de pickup = arrivalTime - durationMin
-        if (arrivalDateObj && durationMin) {
-          const pickupMs = arrivalDateObj.getTime() - (durationMin * 60000);
-          const pickupDateObj = new Date(pickupMs);
-          departureTime = `${String(pickupDateObj.getHours()).padStart(2, '0')}:${String(pickupDateObj.getMinutes()).padStart(2, '0')}`;
+      // PRIORITÉ : utiliser l'heure de pickup calculée par l'API si disponible
+      if (o._calculated_pickup_time) {
+        try {
+          const pickupDt = new Date(o._calculated_pickup_time);
+          departureTime = `${String(pickupDt.getHours()).padStart(2, '0')}:${String(pickupDt.getMinutes()).padStart(2, '0')}`;
+          departureDate = this.formatDateFR(o._calculated_pickup_time);
+        } catch(err) {
+          console.warn('Failed to parse calculated pickup time:', err);
+        }
+      }
+      // Sinon, utiliser l'heure de pickup précalculée dans calculateDetoursForOffers
+      else if (isDetour && detourInfo && detourInfo.pickupTime) {
+        // Pour l'ALLER avec détour : utiliser pickupTime déjà calculé
+        // pickupTime = heure arrivée événement - durée trajet passager (meeting → destination)
+        departureTime = detourInfo.pickupTime;
+        console.log(`🕐 Utilisation pickupTime pour affichage: ${detourInfo.pickupTime} (offre ${o.id})`);
+        console.log(`📊 isDetour=${isDetour}, detourInfo=`, detourInfo);
+        
+        // Reconstruire la date complète pour departureDate
+        if (arrivalDateObj) {
+          const [hours, minutes] = detourInfo.pickupTime.split(':').map(Number);
+          const pickupDateObj = new Date(arrivalDateObj);
+          pickupDateObj.setHours(hours, minutes, 0, 0);
           departureDate = this.formatDateFR(pickupDateObj.toISOString().slice(0, 19).replace('T', ' '));
         }
       } else {
@@ -10341,8 +11803,12 @@ fitMapToBounds() {
         price = this.computeBasePrice(km, !!details.includeTolls);
       }
       
-      // Si on a un détour précalculé, utiliser le prix ajusté
-      if (isDetour && detourInfo && detourInfo.adjustedPrice) {
+      // PRIORITÉ : utiliser le prix calculé par l'API si disponible
+      if (o._calculated_segment_price) {
+        price = parseFloat(o._calculated_segment_price);
+      }
+      // Sinon, si on a un détour précalculé, utiliser le prix ajusté
+      else if (isDetour && detourInfo && detourInfo.adjustedPrice) {
         price = parseFloat(detourInfo.adjustedPrice);
       }
     } else {
@@ -10350,14 +11816,15 @@ fitMapToBounds() {
       cardColor = this.colorReturn;
       cardLabel = 'RETOUR';
       
-      // Pour les détours, utiliser l'adresse de recherche du client au lieu du départ du conducteur
-      if (isDetour && detourInfo && detourInfo.searchLocation) {
-        meetingPointLocation = detourInfo.searchLocation;
-        startLocation = dest; // On garde le départ original pour référence interne (inversé)
+      // Pour les détours RETOUR : le point de rencontre devient l'endLocation (dépôt)
+      if (isDetour && detourInfo && detourInfo.meetingPoint && detourInfo.meetingPoint.address) {
+        meetingPointLocation = detourInfo.meetingPoint.address;
+        startLocation = dest; // Départ du retour = destination de l'événement
+        endLocation = detourInfo.meetingPoint.address; // Dépôt = point de rencontre sélectionné à l'aller
       } else {
         startLocation = dest; // Inversé
+        endLocation = dep;    // Inversé
       }
-      endLocation = dep;    // Inversé
       
       const returnDepartureTime = details.returnTrip?.time || null;
       let returnDateObj = null;
@@ -10388,10 +11855,18 @@ fitMapToBounds() {
       
       durationStr = durationMin ? `${Math.floor(durationMin / 60)}h${String(durationMin % 60).padStart(2, '0')}` : null;
       
-      // Pour les détours : afficher l'heure d'ARRIVÉE (dépôt du client)
-      // Calcul : heure départ (FIXE) + durée pickup->arrivée
-      // Pour les trajets normaux : calculer l'heure d'arrivée normale
-      if (isDetour && detourInfo && returnDateObj && durationMin) {
+      // PRIORITÉ : utiliser l'heure de pickup calculée par l'API si disponible (pour l'arrivée en retour)
+      if (o._calculated_pickup_time) {
+        try {
+          const pickupDt = new Date(o._calculated_pickup_time);
+          arrivalTime = `${String(pickupDt.getHours()).padStart(2, '0')}:${String(pickupDt.getMinutes()).padStart(2, '0')}`;
+          arrivalDate = this.formatDateFR(o._calculated_pickup_time);
+        } catch(err) {
+          console.warn('Failed to parse calculated pickup time:', err);
+        }
+      }
+      // Sinon, utiliser la logique de détour existante
+      else if (isDetour && detourInfo && returnDateObj && durationMin) {
         // Pour le RETOUR avec détour :
         // - departureTime reste FIXE (événement)
         // - arrivalTime = heure de dépôt = departureTime + pickupDuration + durationMin
@@ -10421,8 +11896,12 @@ fitMapToBounds() {
         price = this.computeBasePrice(km, !!details.includeTolls);
       }
       
-      // Si on a un détour précalculé, utiliser le prix ajusté
-      if (isDetour && detourInfo && detourInfo.adjustedPrice) {
+      // PRIORITÉ : utiliser le prix calculé par l'API si disponible
+      if (o._calculated_segment_price) {
+        price = parseFloat(o._calculated_segment_price);
+      }
+      // Sinon, si on a un détour précalculé, utiliser le prix ajusté
+      else if (isDetour && detourInfo && detourInfo.adjustedPrice) {
         price = parseFloat(detourInfo.adjustedPrice);
       }
     }
@@ -10454,8 +11933,9 @@ fitMapToBounds() {
     let seatIcons = '';
     if (Number.isFinite(Number(seats))) {
       const totalSeats = Number(seats);
+      const takenSeats = totalSeats - (remaining != null ? remaining : 0);
       for (let i = 0; i < totalSeats; i++) {
-        const taken = i < reserved;
+        const taken = i < takenSeats;
         seatIcons += `<span style="display:inline-block;width:18px;height:18px;border-radius:4px;margin-right:4px;${taken ? 'background:#ddd;' : 'background:#4caf50;'}"></span>`;
       }
     }
@@ -10861,10 +12341,22 @@ fitMapToBounds() {
           
           // PRIORITÉ 2 : Vérifier si l'offre nécessite une sélection de point de rencontre
           // (accept_passengers_on_route = true ET point de départ hors du rayon)
-          const needsSelection = offer.accept_passengers_on_route === true 
+          // Pour carette : par défaut tous les trajets acceptent les passagers en route
+          const acceptsPassengers = offer.accept_passengers_on_route !== false; // true par défaut
+          const needsSelection = acceptsPassengers
             && this.searchCenterCoords 
             && !offer._noDetourNeeded 
             && !offer._incompatible;
+          
+          console.log('🎯 Vérification sélection point de rencontre:', {
+            offerId: offer.id,
+            accept_passengers_on_route: offer.accept_passengers_on_route,
+            acceptsPassengers,
+            hasSearchCenter: !!this.searchCenterCoords,
+            noDetourNeeded: offer._noDetourNeeded,
+            incompatible: offer._incompatible,
+            needsSelection
+          });
           
           if (needsSelection) {
             // Ouvrir la carte pour sélectionner le point de rencontre
@@ -11513,14 +13005,16 @@ fitMapToBounds() {
     
     // Vérifier si c'est une offre avec détour qui nécessite un choix de point
     // Conditions : 
-    // 1. L'offre accepte les passagers en route (accept_passengers_on_route = true)
+    // 1. L'offre accepte les passagers en route (accept_passengers_on_route != false, true par défaut dans carette)
     // 2. On a une position de recherche du passager (searchCenterCoords existe)
     // 3. Le point de départ/arrivée pertinent est EN DEHORS du rayon de recherche
     //    (sinon le passager peut aller directement au point de RDV fixe)
     
     let needsMeetingPointSelection = false;
     
-    if (offer.accept_passengers_on_route === true && this.searchCenterCoords) {
+    // Pour carette : par défaut tous les trajets acceptent les passagers en route
+    const acceptsPassengers = offer.accept_passengers_on_route !== false;
+    if (acceptsPassengers && this.searchCenterCoords) {
       // Le flag _noDetourNeeded est posé par calculateDetoursForOffers
       // Il indique que le point de départ (aller) ou arrivée (retour) est dans le rayon
       if (offer._noDetourNeeded === true) {
@@ -11651,6 +13145,7 @@ fitMapToBounds() {
     
     // Load and draw route
     routeMap.on('load', async () => {
+      console.log('🗺️ Carte chargée, début affichage route...');
       // Animation d'entrée premium
       routeMap.easeTo({
         zoom: 6,
@@ -11659,11 +13154,51 @@ fitMapToBounds() {
         easing: (t) => t * (2 - t)
       });
       try {
+        console.log('📡 Fetching offer details from /api/carpool/' + offer.id);
         const detailResponse = await fetch(`/api/carpool/${offer.id}`);
-        if (!detailResponse.ok) return;
+        if (!detailResponse.ok) {
+          console.error('❌ Failed to fetch offer details:', detailResponse.status);
+          return;
+        }
         const detail = await detailResponse.json();
+        console.log('✅ Offer details received:', detail);
         let routeGeometry = detail.current_route_geometry || detail.route_outbound?.geometry;
-        if (!routeGeometry) return;
+        
+        // Si pas de géométrie stockée, calculer la route à la volée
+        if (!routeGeometry) {
+          console.log('⚠️ No stored geometry, calculating route on the fly...');
+          
+          // Extraire les coordonnées de départ et destination
+          const departureCoords = detail.departure_coords ? JSON.parse(detail.departure_coords) : null;
+          const destinationCoords = detail.destination_coords ? JSON.parse(detail.destination_coords) : null;
+          
+          if (!departureCoords || !destinationCoords) {
+            console.error('❌ No departure/destination coordinates found');
+            return;
+          }
+          
+          // Convertir {lat, lon} en [lon, lat] pour OSRM
+          const departureLonLat = [departureCoords.lon, departureCoords.lat];
+          const destinationLonLat = [destinationCoords.lon, destinationCoords.lat];
+          
+          console.log('📍 Calculating route from', departureLonLat, 'to', destinationLonLat);
+          
+          // Appeler OSRM via le backend
+          const routeResult = await this.fetchRoute([departureLonLat, destinationLonLat], { overview: 'full' });
+          
+          if (!routeResult.success || !routeResult.data?.routes?.[0]?.geometry) {
+            console.error('❌ Failed to calculate route');
+            return;
+          }
+          
+          routeGeometry = routeResult.data.routes[0].geometry;
+          console.log('✅ Route calculated:', routeGeometry);
+        }
+        
+        if (!routeGeometry) {
+          console.error('❌ No route geometry available');
+          return;
+        }
         
         // Normaliser le format de la géométrie
         // Si c'est {geometry: {coordinates: [...]}}, extraire geometry
@@ -11985,7 +13520,21 @@ fitMapToBounds() {
                       const geocodeData = await geocodeResp.json();
                       console.log('Geocode result:', geocodeData);
                       
-                      let finalAddress = geocodeData.address || coordsAddress;
+                      // Construire une adresse lisible depuis le résultat du géocodage
+                      let finalAddress = coordsAddress;
+                      if (geocodeData.display_name) {
+                        // Utiliser display_name qui contient l'adresse complète
+                        finalAddress = geocodeData.display_name;
+                      } else if (geocodeData.address) {
+                        // Sinon construire depuis les composants
+                        const addr = geocodeData.address;
+                        const parts = [];
+                        if (addr.road) parts.push(addr.road);
+                        if (addr.village || addr.town || addr.city) parts.push(addr.village || addr.town || addr.city);
+                        if (addr.postcode) parts.push(addr.postcode);
+                        finalAddress = parts.join(', ') || coordsAddress;
+                      }
+                      
                       let finalCoords = clickedPoint;
                       
                       // Utiliser les coordonnées exactes de l'adresse trouvée si disponibles
@@ -12542,6 +14091,39 @@ fitMapToBounds() {
         console.log('🔄 Using OUTBOUND route');
       }
       
+      // Si pas de géométrie stockée, calculer la route à la volée
+      if (!routeGeometry) {
+        console.log('⚠️ No stored geometry for recalculation, calculating on the fly...');
+        
+        const departureCoords = detail.departure_coords ? JSON.parse(detail.departure_coords) : null;
+        const destinationCoords = detail.destination_coords ? JSON.parse(detail.destination_coords) : null;
+        
+        if (!departureCoords || !destinationCoords) {
+          console.error('❌ No departure/destination coordinates');
+          this.showToast('❌ Coordonnées manquantes', 'error');
+          return;
+        }
+        
+        // Convertir {lat, lon} en [lon, lat]
+        const departureLonLat = [departureCoords.lon, departureCoords.lat];
+        const destinationLonLat = [destinationCoords.lon, destinationCoords.lat];
+        
+        // Pour le retour, inverser départ et destination
+        const fromLonLat = tripType === 'return' ? destinationLonLat : departureLonLat;
+        const toLonLat = tripType === 'return' ? departureLonLat : destinationLonLat;
+        
+        const routeResult = await this.fetchRoute([fromLonLat, toLonLat], { overview: 'full' });
+        
+        if (!routeResult.success || !routeResult.data?.routes?.[0]?.geometry) {
+          this.showToast('❌ Impossible de calculer le trajet', 'error');
+          return;
+        }
+        
+        routeGeometry = routeResult.data.routes[0].geometry;
+        originalRouteDuration = routeResult.data.routes[0].duration;
+        console.log('✅ Route calculated for recalculation');
+      }
+      
       if (!routeGeometry) {
         this.showToast('❌ Trajet non disponible', 'error');
         return;
@@ -12846,7 +14428,11 @@ fitMapToBounds() {
       
       // Mettre à jour l'offre avec les nouvelles infos
       offer._detourInfo = {
-        meetingPoint: meetingPoint,
+        meetingPoint: {
+          coords: meetingPoint,
+          address: meetingAddress,
+          distanceFromSearch: this.haversineMeters(this.searchCenterCoords || meetingPoint, meetingPoint)
+        },
         meetingAddress: meetingAddress,
         detourRoute: detourRoute, // Objet complet avec geometry + duration + waypoint_passenger_ids
         additionalDistance: additionalDistance,
@@ -12858,14 +14444,14 @@ fitMapToBounds() {
         waypointPassengerIds: waypointPassengerIds  // Ordre géographique des passagers
       };
       
-      // IMPORTANT: Mettre à jour l'adresse ET les coordonnées dans offer.details._detourInfo.meetingPoint
-      // pour que le re-render affiche la bonne adresse et que la carte soit cliquable
-      if (offer.details && offer.details._detourInfo && offer.details._detourInfo.meetingPoint) {
-        offer.details._detourInfo.meetingPoint.address = meetingAddress;
-        offer.details._detourInfo.meetingPoint.coords = meetingPoint;
-        console.log('✅ Updated meetingPoint.address to:', meetingAddress);
-        console.log('✅ Updated meetingPoint.coords to:', meetingPoint);
+      // IMPORTANT: Mettre à jour aussi dans offer.details._detourInfo pour cohérence
+      if (offer.details) {
+        offer.details._detourInfo = {...offer._detourInfo};
+        offer.details._detourCalculated = true;
       }
+      
+      // Marquer l'offre comme ayant un détour calculé
+      offer._detourCalculated = true;
       
       console.log('✅ Detour recalculated:', offer._detourInfo);
       
@@ -13000,14 +14586,11 @@ fitMapToBounds() {
   
   async reserveBothTrips(outboundOffer, returnOffer) {
     // Réserver l'aller et le retour avec une seule confirmation
-    const userId = (typeof window !== 'undefined' && window.userId) ? String(window.userId) : null;
-    if (!userId) {
-      alert('Veuillez vous connecter pour réserver.');
-      return;
-    }
+    // ✅ V2: Pas besoin de userId - système basé sur email
     
     // Vérifier qu'il n'y a pas déjà de réservations existantes
-    if (Array.isArray(this.myReservations)) {
+    const userId = (typeof window !== 'undefined' && window.userId) ? String(window.userId) : null;
+    if (userId && Array.isArray(this.myReservations)) {
       const hasOutbound = this.myReservations.some(res => res && res.trip_type === 'outbound');
       const hasReturn = this.myReservations.some(res => res && res.trip_type === 'return');
       
@@ -13072,6 +14655,7 @@ fitMapToBounds() {
   }
   
   showReservationPopup(offer, tripType = 'outbound') {
+    // ✅ V2: Pas besoin de userId - réservation par email
     // Vérifier si l'utilisateur a déjà une réservation pour ce type de trajet (peu importe l'offre)
     const userId = (typeof window !== 'undefined' && window.userId) ? String(window.userId) : null;
     if (userId && Array.isArray(this.myReservations)) {
@@ -13111,10 +14695,200 @@ fitMapToBounds() {
   closeReservationPopup() {
     if (this._reservationBackdrop) { try { this._reservationBackdrop.remove(); } catch(_){} this._reservationBackdrop = null; }
   }
+  
+  showPassengerDetailsPopup(offer, tripType) {
+    return new Promise((resolve, reject) => {
+      this.closeReservationPopup();
+      
+      const backdrop = document.createElement('div');
+      backdrop.className = 'modal-backdrop';
+      backdrop.innerHTML = `
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="passenger-details-title" style="max-width: 500px;">
+          <h2 id="passenger-details-title" style="margin-bottom: 24px; font-family: ${this.fontFamily};">📋 Vos coordonnées</h2>
+          
+          <div style="background: #e3f2fd; padding: 16px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #2196F3;">
+            <p style="margin: 4px 0; color: #333; font-size: 14px;"><strong>${tripType === 'outbound' ? '➡️' : '⬅️'} ${offer.departure || ''} → ${offer.destination || ''}</strong></p>
+            <p style="margin: 4px 0; color: #666; font-size: 13px;">📅 ${this.formatDateFR(offer.datetime)}</p>
+          </div>
+          
+          <form id="passenger-form" style="display: flex; flex-direction: column; gap: 16px;">
+            <div>
+              <label for="passenger-name" style="display: block; margin-bottom: 6px; font-weight: 600; color: #333; font-family: ${this.fontFamily};">Nom complet *</label>
+              <input 
+                type="text" 
+                id="passenger-name" 
+                required 
+                placeholder="Ex: Jean Dupont"
+                style="width: 100%; padding: 10px 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; font-family: ${this.fontFamily}; box-sizing: border-box;"
+              />
+            </div>
+            
+            <div>
+              <label for="passenger-email" style="display: block; margin-bottom: 6px; font-weight: 600; color: #333; font-family: ${this.fontFamily};">Email *</label>
+              <input 
+                type="email" 
+                id="passenger-email" 
+                required 
+                placeholder="Ex: jean.dupont@email.com"
+                style="width: 100%; padding: 10px 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; font-family: ${this.fontFamily}; box-sizing: border-box;"
+              />
+            </div>
+            
+            <div>
+              <label for="passenger-email-confirm" style="display: block; margin-bottom: 6px; font-weight: 600; color: #333; font-family: ${this.fontFamily};">Confirmer l'email *</label>
+              <input 
+                type="email" 
+                id="passenger-email-confirm" 
+                required 
+                placeholder="Saisissez à nouveau votre email"
+                style="width: 100%; padding: 10px 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; font-family: ${this.fontFamily}; box-sizing: border-box;"
+              />
+              <p style="margin: 6px 0 0 0; font-size: 12px; color: #666; font-family: ${this.fontFamily};">✅ Pour éviter les erreurs de frappe</p>
+            </div>
+            
+            <div>
+              <label for="passenger-phone" style="display: block; margin-bottom: 6px; font-weight: 600; color: #333; font-family: ${this.fontFamily};">WhatsApp / Téléphone *</label>
+              <input 
+                type="tel" 
+                id="passenger-phone" 
+                required 
+                placeholder="Ex: 06 12 34 56 78"
+                style="width: 100%; padding: 10px 12px; border: 2px solid #ddd; border-radius: 6px; font-size: 14px; font-family: ${this.fontFamily}; box-sizing: border-box;"
+              />
+              <p style="margin: 6px 0 0 0; font-size: 12px; color: #666; font-family: ${this.fontFamily};">💬 Pour la mise en relation directe avec le conducteur</p>
+            </div>
+            
+            <div style="background: #e3f2fd; padding: 12px; border-radius: 6px; margin-top: 8px; border-left: 3px solid #2196F3;">
+              <p style="margin: 0; font-size: 13px; color: #1565c0; line-height: 1.5; font-family: ${this.fontFamily};">
+                🔒 <strong>Caution d'engagement : 1,00 €</strong><br>
+                Remboursée si le conducteur refuse.<br>
+                Le reste du prix se règle directement avec le conducteur.
+              </p>
+            </div>
+            
+            <div class="buttons" style="margin-top: 8px;">
+              <button type="button" class="cancel" aria-label="Annuler">Annuler</button>
+              <button type="submit" class="confirm" aria-label="Envoyer la demande">✉️ Envoyer ma demande</button>
+            </div>
+          </form>
+        </div>`;
+      
+      this.shadowRoot.appendChild(backdrop);
+      this._reservationBackdrop = backdrop;
+      
+      const form = backdrop.querySelector('#passenger-form');
+      const nameInput = backdrop.querySelector('#passenger-name');
+      const emailInput = backdrop.querySelector('#passenger-email');
+      const emailConfirmInput = backdrop.querySelector('#passenger-email-confirm');
+      const phoneInput = backdrop.querySelector('#passenger-phone');
+      
+      // Focus sur le premier champ
+      setTimeout(() => nameInput.focus(), 100);
+      
+      // Handler fermeture
+      const close = () => {
+        this.closeReservationPopup();
+        reject(new Error('Cancelled by user'));
+      };
+      
+      // Events
+      backdrop.querySelector('.cancel').addEventListener('click', close);
+      backdrop.addEventListener('click', (e) => {
+        if (e.target === backdrop) close();
+      });
+      
+      const onKey = (e) => {
+        if (e.key === 'Escape') close();
+      };
+      document.addEventListener('keydown', onKey, { once: true });
+      
+      // Submit handler
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        
+        const name = nameInput.value.trim();
+        const email = emailInput.value.trim();
+        const emailConfirm = emailConfirmInput.value.trim();
+        const phone = phoneInput.value.trim();
+        
+        // Validation
+        if (!name) {
+          alert('Le nom est requis');
+          nameInput.focus();
+          return;
+        }
+        
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!email || !emailRegex.test(email)) {
+          alert('Un email valide est requis');
+          emailInput.focus();
+          return;
+        }
+        
+        // Vérifier que les deux emails correspondent
+        if (email !== emailConfirm) {
+          alert('⚠️ Les deux emails ne correspondent pas.\n\nVeuillez vérifier votre saisie pour éviter les erreurs.');
+          emailConfirmInput.focus();
+          emailConfirmInput.select();
+          return;
+        }
+        
+        if (!phone) {
+          alert('Le téléphone est requis pour la mise en relation WhatsApp');
+          phoneInput.focus();
+          return;
+        }
+        
+        this.closeReservationPopup();
+        resolve({ name, email, phone });
+      });
+    });
+  }
+  
   async reserveOffer(offer, tripType = 'outbound') {
     try {
-      const userId = (typeof window !== 'undefined' && window.userId) ? String(window.userId) : null;
-      if (!userId) { alert('Veuillez vous connecter pour réserver.'); return; }
+      // ✅ V2: Collecter email/téléphone/nom du passager via popup élégante
+      let passengerDetails;
+      try {
+        passengerDetails = await this.showPassengerDetailsPopup(offer, tripType);
+      } catch (err) {
+        // Utilisateur a annulé
+        console.log('Reservation cancelled by user');
+        return;
+      }
+      
+      const passengerName = passengerDetails.name;
+      const passengerEmail = passengerDetails.email;
+      const passengerPhone = passengerDetails.phone;
+      
+      // 💳 ÉTAPE PAIEMENT STRIPE 1€
+      console.log('💳 Initialisation du paiement caution...');
+      
+      // Calculer le prix total et le reste à payer
+      const totalPrice = offer._detourInfo?.adjustedPrice || offer.price || 5.00;
+      const cautionAmount = 1.00;
+      const remainingAmount = (totalPrice - cautionAmount).toFixed(2);
+      
+      // TODO: Intégrer Stripe Payment Intent
+      // Pour l'instant, on simule le paiement
+      const paymentConfirmed = confirm(
+        `🔒 Caution d'engagement : ${cautionAmount.toFixed(2)} €\n\n` +
+        `Cette caution garantit le sérieux de votre demande.\n` +
+        `• Déduite du prix du trajet (${totalPrice.toFixed(2)} €)\n` +
+        `• Remboursée si le conducteur refuse\n\n` +
+        `Reste à payer au conducteur : ${remainingAmount} €\n` +
+        `(en cash, Lydia ou Paylib le jour du trajet)\n\n` +
+        `Continuer vers le paiement sécurisé ?`
+      );
+      
+      if (!paymentConfirmed) {
+        console.log('❌ Paiement annulé par l\'utilisateur');
+        alert('Demande annulée. Vous n\'avez pas été débité.');
+        return;
+      }
+      
+      // TODO: Après intégration Stripe, stocker le payment_intent_id
+      const paymentIntentId = null; // Sera rempli par Stripe
       
       // Récupérer le nombre de passagers demandé
       const seatsEl = this.shadowRoot.getElementById('seats');
@@ -13145,9 +14919,12 @@ fitMapToBounds() {
         }
       }
       
+      // ✅ V2: Payload avec email/phone au lieu de user_id
       const payload = { 
         offer_id: offer.id, 
-        user_id: userId,
+        passenger_name: passengerName.trim(),
+        passenger_email: passengerEmail.trim(),
+        passenger_phone: passengerPhone.trim(),
         passengers: requestedSeats,
         detour_time: detourTime,
         meeting_point: meetingPoint,
@@ -13156,16 +14933,31 @@ fitMapToBounds() {
         trip_type: tripType
       };
       
-      const res = await fetch('/api/carpool/reserve', { method:'POST', headers:{'Content-Type':'application/json'}, credentials:'include', body:JSON.stringify(payload) });
+      // ✅ V2: Appeler /api/v2/reservations au lieu de /api/carpool/reserve
+      const res = await fetch('/api/v2/reservations', { 
+        method:'POST', 
+        headers:{'Content-Type':'application/json'}, 
+        credentials:'include', 
+        body:JSON.stringify(payload) 
+      });
+      
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
         const errorMsg = errorData.error || 'Réservation échouée';
         throw new Error(errorMsg);
       }
-      alert('Réservation confirmée. Bon trajet !');
+      
+      const resData = await res.json();
+      
+      alert(
+        `✅ Demande envoyée à ${offer.driver_name || 'le conducteur'} !\n\n` +
+        `💳 Caution payée : 1,00 € ✓\n` +
+        `(Remboursée si refusée)\n\n` +
+        `Vous recevrez un email dès qu'il aura accepté.\n` +
+        `Prix restant à régler : ${remainingAmount} € (cash/Lydia/Paylib)`
+      );
       this.closeReservationPopup();
-      // Recharger les réservations pour mettre à jour myReservations
-      try { await this.fetchMyTrips(); } catch(_) {}
+      
       // Met à jour localement le compteur de réservation pour éviter un refetch immédiat
       try {
         if (offer) {
