@@ -504,7 +504,7 @@ def get_offers():
             
             offers = []
             for row in cur.fetchall():
-                offer = dict(zip([d[0] for d in cur.description], row))
+                offer = dict(row)  # DictCursor already returns dicts
                 # Décoder les champs JSON
                 for field_name in ['details', 'route_outbound', 'route_return', 'detour_zone_outbound', 'detour_zone_return']:
                     if offer.get(field_name):
@@ -533,7 +533,7 @@ def get_offer(offer_id):
             if not row:
                 return jsonify({"error": "Offre non trouvée"}), 404
             
-            offer = dict(zip([d[0] for d in cur.description], row))
+            offer = dict(row)  # DictCursor already returns dicts
             
             # Décoder JSON
             for field_name in ['details', 'route_outbound', 'route_return', 'detour_zone_outbound', 'detour_zone_return', 'current_route_geometry']:
@@ -705,7 +705,7 @@ def get_my_reservations():
             
             reservations = []
             for row in cur.fetchall():
-                res = dict(zip([d[0] for d in cur.description], row))
+                res = dict(row)  # DictCursor already returns dicts
                 for field_name in ['meeting_point_coords', 'detour_route', 'pickup_coords', 'route_segment_geometry']:
                     if res.get(field_name):
                         try:
@@ -777,7 +777,7 @@ def search_offers():
                 """)
                 
                 for row in cur.fetchall():
-                    offer = dict(zip([d[0] for d in cur.description], row))
+                    offer = dict(row)  # DictCursor already returns dicts
                     
                     # Décoder les champs JSON
                     for field_name in ['details', 'route_outbound', 'route_return', 'detour_zone_outbound', 'detour_zone_return']:
@@ -872,7 +872,7 @@ def search_offers():
             matching_offers = []
             
             for row in cur.fetchall():
-                offer = dict(zip([d[0] for d in cur.description], row))
+                offer = dict(row)  # DictCursor already returns dicts
                 
                 # Décoder zones de détour
                 zone_field = 'detour_zone_outbound' if trip_type == 'outbound' else 'detour_zone_return'
@@ -1286,7 +1286,7 @@ def search_offers_v2():
         with sql.db_cursor() as cur:
             cur.execute(query, params)
             for row in cur.fetchall():
-                offer = dict(zip([d[0] for d in cur.description], row))
+                offer = dict(row)  # DictCursor already returns dicts
 
                 # Décoder les champs JSON
                 for field_name in ['details', 'route_outbound', 'route_return', 'detour_zone_outbound', 'detour_zone_return']:
@@ -1298,7 +1298,12 @@ def search_offers_v2():
                                 offer[field_name] = {}
 
                 # Filtrer par rayon
-                details = offer.get('details', {})
+                details = offer.get('details') or {}
+                if isinstance(details, str):
+                    try:
+                        details = json.loads(details)
+                    except Exception:
+                        details = {}
                 from_coords = details.get('fromCoords', [])
                 to_coords = details.get('toCoords', [])
 
