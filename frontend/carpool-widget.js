@@ -1078,8 +1078,8 @@ class CarpoolOfferWidget extends HTMLElement {
     try {
       // Fetch my offers and my reservations
       const [myOffersRes, myResRes] = await Promise.all([
-        fetch(`/api/carpool/mine?user_id=${encodeURIComponent(uid)}`, { credentials: 'include' }),
-        fetch(`/api/carpool/reservations?user_id=${encodeURIComponent(uid)}`, { credentials: 'include' })
+        fetch(`${this.API_URL}/api/carpool/mine?user_id=${encodeURIComponent(uid)}`, { credentials: 'include' }),
+        fetch(`${this.API_URL}/api/carpool/reservations?user_id=${encodeURIComponent(uid)}`, { credentials: 'include' })
       ]);
       const myOffers = myOffersRes.ok ? await myOffersRes.json() : [];
       const myReservations = myResRes.ok ? await myResRes.json() : [];
@@ -1093,7 +1093,7 @@ class CarpoolOfferWidget extends HTMLElement {
       if (offerIds.length) {
         try {
           const qs = encodeURIComponent(offerIds.join(','));
-          const r = await fetch(`/api/carpool/reservations/by-offers?ids=${qs}`, { credentials:'include' });
+          const r = await fetch(`${this.API_URL}/api/carpool/reservations/by-offers?ids=${qs}`, { credentials:'include' });
           if (r.ok) {
             const jj = await r.json();
             passengersMap = (jj && jj.reservations) || {};
@@ -1955,7 +1955,7 @@ class CarpoolOfferWidget extends HTMLElement {
       this.searchLocationName = fromAddress;
       
       // Appeler l'API de recherche
-      const response = await fetch('/api/v2/offers/recurrent/search', {
+      const response = await fetch(`${this.API_URL}/api/v2/offers/recurrent/search`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -3391,7 +3391,7 @@ class CarpoolOfferWidget extends HTMLElement {
       try {
         const uid = (typeof window !== 'undefined' && window.userId) ? String(window.userId) : null;
         if (uid) {
-          const myResRes = await fetch(`/api/carpool/reservations?user_id=${encodeURIComponent(uid)}`, { credentials: 'include' });
+          const myResRes = await fetch(`${this.API_URL}/api/carpool/reservations?user_id=${encodeURIComponent(uid)}`, { credentials: 'include' });
           if (myResRes.ok) {
             this.myReservations = await myResRes.json();
           }
@@ -8142,7 +8142,7 @@ class CarpoolOfferWidget extends HTMLElement {
     console.log('📤 Envoi données RSE:', payload);
     
     try {
-      const response = await fetch('/api/v2/rse/submit', {
+      const response = await fetch(`${this.API_URL}/api/v2/rse/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -8376,7 +8376,7 @@ class CarpoolOfferWidget extends HTMLElement {
     }
 
     try {
-      const res = await fetch('/api/v2/offers/recurrent', {
+      const res = await fetch(`${this.API_URL}/api/v2/offers/recurrent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -10578,7 +10578,7 @@ class CarpoolOfferWidget extends HTMLElement {
         }
         
         try {
-          const res = await fetch('/api/v2/offers/recurrent', {
+          const res = await fetch(`${this.API_URL}/api/v2/offers/recurrent`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -10786,7 +10786,7 @@ class CarpoolOfferWidget extends HTMLElement {
       if (btn) { btn.disabled = true; btn.textContent = 'Envoi…'; }
       
       // ✅ V2: Appeler /api/v2/offers au lieu de /api/carpool
-      const res = await fetch('/api/v2/offers', {
+      const res = await fetch(`${this.API_URL}/api/v2/offers`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -11363,7 +11363,7 @@ class CarpoolOfferWidget extends HTMLElement {
   }
   try {
     // Utiliser le proxy backend pour éviter CORS
-    const res = await fetch(`/api/geocode/search?q=${encodeURIComponent(query)}&limit=5`);
+    const res = await fetch(`${this.API_URL}/api/geocode/search?q=${encodeURIComponent(query)}&limit=5`);
     const data = await res.json();
     
     if (data.source === 'ban') {
@@ -11789,7 +11789,7 @@ fitMapToBounds() {
     
     // Utiliser le proxy backend pour éviter CORS
     try {
-      const res = await fetch(`/api/geocode/search?q=${encodeURIComponent(address)}&limit=1`);
+      const res = await fetch(`${this.API_URL}/api/geocode/search?q=${encodeURIComponent(address)}&limit=1`);
       const data = await res.json();
       
       if (data.source === 'ban' && data.features && data.features.length > 0) {
@@ -11897,7 +11897,7 @@ fitMapToBounds() {
       console.log('🚗 Fetching route alternatives via backend...');
       
       const waypoints = [this.startCoords, this.endCoords];
-      const backendRes = await fetch('/api/carpool/calculate-route', {
+      const backendRes = await fetch(`${this.API_URL}/api/carpool/calculate-route`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ waypoints, alternatives: true })
@@ -12102,7 +12102,7 @@ fitMapToBounds() {
       console.log('🔄 Fetching RETURN route alternatives via backend...');
       
       const waypoints = [this.endCoords, this.startCoords];
-      const backendRes = await fetch('/api/carpool/calculate-route', {
+      const backendRes = await fetch(`${this.API_URL}/api/carpool/calculate-route`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ waypoints, alternatives: true })
@@ -13638,7 +13638,7 @@ fitMapToBounds() {
     const container = this.shadowRoot.getElementById('find-offers-inner');
     if (container) container.setAttribute('aria-busy','true');
     try {
-      const res = await fetch('/api/carpool', { credentials: 'include' });
+      const res = await fetch(`${this.API_URL}/api/carpool`, { credentials: 'include' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       this._offers = Array.isArray(data.offers) ? data.offers : (Array.isArray(data) ? data : []);
@@ -13661,7 +13661,7 @@ fitMapToBounds() {
     try {
       console.log('🔄 Résolution des sites avec le backend...');
       
-      const response = await fetch('/api/v2/sites/resolve', {
+      const response = await fetch(`${this.API_URL}/api/v2/sites/resolve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -13686,7 +13686,7 @@ fitMapToBounds() {
     try {
       // Mode récurrent ou RSE : compter les offres récurrentes actives de l'entreprise
       if ((this.isRecurrentMode() || this.isRseMode()) && this.companyId) {
-        const response = await fetch(`/api/v2/offers/recurrent/count?company_id=${this.companyId}`);
+        const response = await fetch(`${this.API_URL}/api/v2/offers/recurrent/count?company_id=${this.companyId}`);
         if (response.ok) {
           const data = await response.json();
           const count = data.count || 0;
@@ -13733,7 +13733,7 @@ fitMapToBounds() {
       const backendRadius = Math.max(radiusMeters, 50000); // Min 50km pour capter routes passant près du point
       const eventId = this.getAttribute('event-id') || '';
       const eventParam = eventId ? `&event_id=${encodeURIComponent(eventId)}` : '';
-      const url = `/api/v2/offers/search?lon=${lon}&lat=${lat}&radius=${backendRadius}${eventParam}`;
+      const url = `${this.API_URL}/api/v2/offers/search?lon=${lon}&lat=${lat}&radius=${backendRadius}${eventParam}`;
       const res = await fetch(url, { credentials: 'include' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
@@ -14137,7 +14137,7 @@ fitMapToBounds() {
     if (!applied) {
       try {
         const qs = encodeURIComponent(uids.join(','));
-        const resp = await fetch(`/api/users/batch?ids=${qs}`, { credentials: 'include' });
+        const resp = await fetch(`${this.API_URL}/api/users/batch?ids=${qs}`, { credentials: 'include' });
         if (resp.ok) {
           const data = await resp.json();
           const users = (data && data.users) || {};
@@ -14191,7 +14191,7 @@ fitMapToBounds() {
     if (!applied) {
       try {
         const qs = encodeURIComponent(missing.join(','));
-        const resp = await fetch(`/api/users/batch?ids=${qs}`, { credentials: 'include' });
+        const resp = await fetch(`${this.API_URL}/api/users/batch?ids=${qs}`, { credentials: 'include' });
         if (resp.ok) {
           const data = await resp.json();
           const users = (data && data.users) || {};
@@ -14214,7 +14214,7 @@ fitMapToBounds() {
    */
   async fetchRoute(waypoints, options = {}) {
     try {
-      const response = await fetch('/api/carpool/calculate-route', {
+      const response = await fetch(`${this.API_URL}/api/carpool/calculate-route`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
@@ -15514,7 +15514,7 @@ fitMapToBounds() {
       const uid = (typeof window !== 'undefined' && window.userId) ? String(window.userId) : null;
       if (!uid) { alert('Veuillez vous connecter.'); return; }
       if (!confirm('Annuler cette offre de covoit ?')) return;
-      const res = await fetch(`/api/carpool/${encodeURIComponent(offerId)}?user_id=${encodeURIComponent(uid)}`, { method:'DELETE', credentials:'include' });
+      const res = await fetch(`${this.API_URL}/api/carpool/${encodeURIComponent(offerId)}?user_id=${encodeURIComponent(uid)}`, { method:'DELETE', credentials:'include' });
       if (!res.ok) {
         const tx = await res.text().catch(()=> '');
         alert("Annulation impossible: " + (tx || res.status));
@@ -15532,7 +15532,7 @@ fitMapToBounds() {
       const uid = (typeof window !== 'undefined' && window.userId) ? String(window.userId) : null;
       if (!uid) { alert('Veuillez vous connecter.'); return; }
       if (!confirm('Annuler votre réservation ?')) return;
-      const res = await fetch(`/api/carpool/reservations/${encodeURIComponent(offerId)}?user_id=${encodeURIComponent(uid)}`, { method:'DELETE', credentials:'include' });
+      const res = await fetch(`${this.API_URL}/api/carpool/reservations/${encodeURIComponent(offerId)}?user_id=${encodeURIComponent(uid)}`, { method:'DELETE', credentials:'include' });
       if (!res.ok) {
         const tx = await res.text().catch(()=> '');
         alert("Annulation impossible: " + (tx || res.status));
@@ -15561,7 +15561,7 @@ fitMapToBounds() {
       
       if (!confirmed) return;
       
-      const res = await fetch(`/api/carpool/reservations/${encodeURIComponent(offerId)}/confirm?user_id=${encodeURIComponent(uid)}`, {
+      const res = await fetch(`${this.API_URL}/api/carpool/reservations/${encodeURIComponent(offerId)}/confirm?user_id=${encodeURIComponent(uid)}`, {
         method:'POST',
         credentials:'include',
         headers: { 'Content-Type':'application/json' },
@@ -15623,7 +15623,7 @@ fitMapToBounds() {
       
       if (!confirmed) return;
       
-      const res = await fetch(`/api/carpool/reservations/${encodeURIComponent(offerId)}/passenger/${encodeURIComponent(passengerId)}?user_id=${encodeURIComponent(uid)}&trip_type=${encodeURIComponent(tripType)}`, {
+      const res = await fetch(`${this.API_URL}/api/carpool/reservations/${encodeURIComponent(offerId)}/passenger/${encodeURIComponent(passengerId)}?user_id=${encodeURIComponent(uid)}&trip_type=${encodeURIComponent(tripType)}`, {
         method:'DELETE',
         credentials:'include'
       });
@@ -15678,8 +15678,8 @@ fitMapToBounds() {
       
       // Charger le détail complet de l'offre avec les routes et les passagers
       const [detailResponse, reservationsResponse] = await Promise.all([
-        fetch(`/api/carpool/${offerId}`),
-        mode === 'mine-offers' ? fetch(`/api/carpool/reservations/by-offers?ids=${offerId}`) : Promise.resolve(null)
+        fetch(`${this.API_URL}/api/carpool/${offerId}`),
+        mode === 'mine-offers' ? fetch(`${this.API_URL}/api/carpool/reservations/by-offers?ids=${offerId}`) : Promise.resolve(null)
       ]);
       
       if (!detailResponse.ok) {
@@ -16033,7 +16033,7 @@ fitMapToBounds() {
       if (!offer || !offer.id) return;
       
       // Charger le détail complet de l'offre avec les routes depuis la base
-      const detailResponse = await fetch(`/api/carpool/${offer.id}`);
+      const detailResponse = await fetch(`${this.API_URL}/api/carpool/${offer.id}`);
       if (!detailResponse.ok) {
         console.warn('Impossible de charger les détails de l\'offre');
         return;
@@ -16112,7 +16112,7 @@ fitMapToBounds() {
     
     // Si un détour est nécessaire, vérifier s'il y a une intersection possible AVANT d'ouvrir la modale
     if (needsMeetingPointSelection && this.searchCenterCoords && this.searchRadiusMeters) {
-      const detail = await (await fetch(`/api/carpool/${offer.id}`)).json();
+      const detail = await (await fetch(`${this.API_URL}/api/carpool/${offer.id}`)).json();
       const routeGeometry = detail.current_route_geometry || detail.route_outbound?.geometry;
       
       if (routeGeometry && routeGeometry.coordinates) {
@@ -16234,7 +16234,7 @@ fitMapToBounds() {
       });
       try {
         console.log('📡 Fetching offer details from /api/carpool/' + offer.id);
-        const detailResponse = await fetch(`/api/carpool/${offer.id}`);
+        const detailResponse = await fetch(`${this.API_URL}/api/carpool/${offer.id}`);
         if (!detailResponse.ok) {
           console.error('❌ Failed to fetch offer details:', detailResponse.status);
           return;
@@ -16588,7 +16588,7 @@ fitMapToBounds() {
                     const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 secondes max
                     
                     // Utiliser notre proxy backend pour éviter CORS
-                    const geocodeUrl = `/api/geocode/reverse?lat=${clickedPoint[1]}&lon=${clickedPoint[0]}`;
+                    const geocodeUrl = `${this.API_URL}/api/geocode/reverse?lat=${clickedPoint[1]}&lon=${clickedPoint[0]}`;
                     const geocodeResp = await fetch(geocodeUrl, {
                       signal: controller.signal
                     });
@@ -16713,7 +16713,7 @@ fitMapToBounds() {
     this.closeRouteModal();
     
     // Récupérer les détails de l'offre
-    const detailResponse = await fetch(`/api/carpool/${offer.id}`);
+    const detailResponse = await fetch(`${this.API_URL}/api/carpool/${offer.id}`);
     if (!detailResponse.ok) {
       console.error('Failed to load offer details');
       return;
@@ -16856,7 +16856,7 @@ fitMapToBounds() {
     this.closeRouteModal();
     
     // Récupérer les détails de l'offre
-    const detailResponse = await fetch(`/api/carpool/${offer.id}`);
+    const detailResponse = await fetch(`${this.API_URL}/api/carpool/${offer.id}`);
     if (!detailResponse.ok) {
       console.error('Failed to load offer details');
       return;
@@ -17009,7 +17009,7 @@ fitMapToBounds() {
     const meetingPointAddress = detourInfo.meetingPoint.address || 'Point de rendez-vous';
     
     // Récupérer les détails complets de l'offre pour avoir la géométrie de la route
-    const detailResponse = await fetch(`/api/carpool/${offer.id}`);
+    const detailResponse = await fetch(`${this.API_URL}/api/carpool/${offer.id}`);
     if (!detailResponse.ok) {
       console.error('Failed to load offer details');
       return;
@@ -17146,7 +17146,7 @@ fitMapToBounds() {
     
     try {
       // Obtenir les coordonnées de départ et d'arrivée du trajet
-      const detailResponse = await fetch(`/api/carpool/${offer.id}`);
+      const detailResponse = await fetch(`${this.API_URL}/api/carpool/${offer.id}`);
       if (!detailResponse.ok) {
         this.showToast('❌ Erreur lors du chargement du trajet', 'error');
         return;
@@ -17472,7 +17472,7 @@ fitMapToBounds() {
       let meetingAddress = providedAddress;
       if (!meetingAddress) {
         try {
-          const geocodeUrl = `/api/geocode/reverse?lat=${meetingPoint[1]}&lon=${meetingPoint[0]}`;
+          const geocodeUrl = `${this.API_URL}/api/geocode/reverse?lat=${meetingPoint[1]}&lon=${meetingPoint[0]}`;
           const geocodeResp = await fetch(geocodeUrl, { timeout: 5000 });
           if (geocodeResp.ok) {
             const geocodeData = await geocodeResp.json();
@@ -18011,7 +18011,7 @@ fitMapToBounds() {
       // 💳 Paiement simulé (1€) avant réservation
       const doReservation = async () => {
         // ✅ V2: Appeler /api/v2/reservations/ponctual pour mode ponctuel
-        const res = await fetch('/api/v2/reservations/ponctual', { 
+        const res = await fetch(`${this.API_URL}/api/v2/reservations/ponctual`, { 
           method:'POST', 
           headers:{'Content-Type':'application/json'}, 
           credentials:'include', 
