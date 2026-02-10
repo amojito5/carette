@@ -49,9 +49,9 @@ def get_connection(user='app', autocommit=True):
 
 @contextmanager
 def db_cursor(root=False, autocommit=True):
-    """Context manager pour exécuter des requêtes SQL"""
+    """Context manager pour exécuter des requêtes SQL avec curseur dictionnaire"""
     conn = get_connection('root' if root else 'app', autocommit=autocommit)
-    cursor = conn.cursor()
+    cursor = conn.cursor(pymysql.cursors.DictCursor)
     try:
         yield cursor
     finally:

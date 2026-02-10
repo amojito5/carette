@@ -9,3 +9,4 @@ python-dotenv>=1.0.0
 gunicorn>=21.2.0
 bleach>=6.0.0
 redis>=5.0.0
+qrcode[pil]>=7.4.0

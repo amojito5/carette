@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard RSE - Carette</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f8fafc;
+            color: #1e293b;
+        }
+        
+        .navbar {
+            background: white;
+            padding: 16px 32px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .navbar h1 {
+            font-size: 24px;
+            font-weight: 800;
+            color: #667eea;
+        }
+        
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 32px;
+        }
+        
+        .header {
+            margin-bottom: 32px;
+        }
+        
+        .header h2 {
+            font-size: 32px;
+            font-weight: 900;
+            margin-bottom: 8px;
+        }
+        
+        .header p {
+            color: #64748b;
+            font-size: 16px;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 32px;
+            flex-wrap: wrap;
+        }
+        
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .control-group label {
+            font-weight: 600;
+            color: #475569;
+        }
+        
+        select, input {
+            padding: 10px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        select:hover, input:hover {
+            border-color: #667eea;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 14px;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-secondary {
+            background: #10b981;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #059669;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            border-left: 4px solid;
+        }
+        
+        .stat-card.purple { border-color: #667eea; }
+        .stat-card.green { border-color: #10b981; }
+        .stat-card.orange { border-color: #f59e0b; }
+        .stat-card.blue { border-color: #3b82f6; }
+        
+        .stat-label {
+            font-size: 13px;
+            color: #64748b;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+        
+        .stat-value {
+            font-size: 36px;
+            font-weight: 900;
+            color: #1e293b;
+            margin-bottom: 4px;
+        }
+        
+        .stat-unit {
+            font-size: 14px;
+            color: #94a3b8;
+        }
+        
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+        
+        .chart-card {
+            background: white;
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .chart-card h3 {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            color: #1e293b;
+        }
+        
+        .map-card {
+            background: white;
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 32px;
+        }
+        
+        .map-card h3 {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            color: #1e293b;
+        }
+        
+        #company-map {
+            height: 500px;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .table-card {
+            background: white;
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 32px;
+        }
+        
+        .table-card h3 {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            color: #1e293b;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th {
+            text-align: left;
+            padding: 12px;
+            border-bottom: 2px solid #e2e8f0;
+            font-weight: 600;
+            color: #475569;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        td {
+            padding: 16px 12px;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        
+        tr:hover {
+            background: #f8fafc;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .badge.high { background: #fee2e2; color: #dc2626; }
+        .badge.medium { background: #fef3c7; color: #d97706; }
+        .badge.low { background: #d1fae5; color: #059669; }
+        
+        .comparison-card {
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+            border: 1px solid #bae6fd;
+        }
+        
+        .comparison-card h3 {
+            margin: 0 0 16px 0;
+            color: #0369a1;
+            font-size: 16px;
+        }
+        
+        .comparison-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        
+        .comparison-item {
+            background: white;
+            padding: 16px;
+            border-radius: 12px;
+            text-align: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .comparison-label {
+            display: block;
+            font-size: 12px;
+            color: #64748b;
+            margin-bottom: 4px;
+        }
+        
+        .comparison-value {
+            display: block;
+            font-size: 20px;
+            font-weight: 700;
+        }
+        
+        .comparison-value.positive { color: #dc2626; }
+        .comparison-value.negative { color: #16a34a; }
+        .comparison-value.neutral { color: #64748b; }
+        
+        .comparison-details {
+            font-size: 13px;
+            color: #64748b;
+            text-align: center;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: #94a3b8;
+        }
+        
+        .loading-spinner {
+            border: 4px solid #f3f4f6;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navbar -->
+    <div class="navbar">
+        <h1>🚗 Carette Dashboard RSE</h1>
+        <div class="user-info">
+            <span id="company-name">Chargement...</span>
+            <button class="btn btn-secondary" onclick="window.location.href='manage-employees-new.html?company_id=' + COMPANY_ID + '&access_key=' + ACCESS_KEY" style="margin-right: 8px;">
+                ⚙️ Gestion
+            </button>
+            <button class="btn btn-secondary" onclick="logout()">Déconnexion</button>
+        </div>
+    </div>
+    
+    <!-- Container principal -->
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h2>Tableau de bord</h2>
+            <p>Analysez l'empreinte carbone de vos déplacements domicile-travail</p>
+        </div>
+        
+        <!-- Contrôles -->
+        <div class="controls">
+            <div class="control-group">
+                <label for="date-start">📅 Du :</label>
+                <input type="date" id="date-start">
+            </div>
+            <div class="control-group">
+                <label for="date-end">Au :</label>
+                <input type="date" id="date-end">
+            </div>
+            <button class="btn btn-primary" onclick="loadDashboard()">🔄 Actualiser</button>
+            <button class="btn btn-secondary" onclick="setLastMonth()">📆 Mois dernier</button>
+            <button class="btn btn-secondary" onclick="exportExcel()">📊 Export Excel</button>
+            <button class="btn btn-secondary" onclick="downloadPDF()">📄 Télécharger PDF</button>
+        </div>
+        
+        <!-- Zone de chargement -->
+        <div id="loading" class="loading">
+            <div class="loading-spinner"></div>
+            <p>Chargement des données...</p>
+        </div>
+        
+        <!-- Contenu du dashboard -->
+        <div id="dashboard-content" style="display: none;">
+            <!-- Statistiques principales -->
+            <div class="stats-grid">
+                <div class="stat-card purple">
+                    <div class="stat-label">Employés actifs</div>
+                    <div class="stat-value" id="stat-employees">-</div>
+                    <div class="stat-unit">participants</div>
+                </div>
+                
+                <div class="stat-card green">
+                    <div class="stat-label">CO₂ Total</div>
+                    <div class="stat-value" id="stat-co2">-</div>
+                    <div class="stat-unit">kg</div>
+                </div>
+                
+                <div class="stat-card orange">
+                    <div class="stat-label">Distance parcourue</div>
+                    <div class="stat-value" id="stat-distance">-</div>
+                    <div class="stat-unit">km</div>
+                </div>
+                
+                <div class="stat-card blue">
+                    <div class="stat-label">Moyenne CO₂/employé</div>
+                    <div class="stat-value" id="stat-avg">-</div>
+                    <div class="stat-unit">kg</div>
+                </div>
+            </div>
+            
+            <!-- Comparatif mois/mois -->
+            <div id="comparison-section" class="comparison-card" style="display: none;">
+                <h3>📈 Évolution vs mois précédent</h3>
+                <div class="comparison-grid">
+                    <div class="comparison-item">
+                        <span class="comparison-label">CO₂</span>
+                        <span id="comparison-co2" class="comparison-value">-</span>
+                    </div>
+                    <div class="comparison-item">
+                        <span class="comparison-label">Distance</span>
+                        <span id="comparison-distance" class="comparison-value">-</span>
+                    </div>
+                    <div class="comparison-item">
+                        <span class="comparison-label">Employés</span>
+                        <span id="comparison-employees" class="comparison-value">-</span>
+                    </div>
+                </div>
+                <div class="comparison-details">
+                    <span id="comparison-prev-month">Mois précédent</span>: 
+                    <span id="comparison-prev-co2">0</span> kg CO₂
+                </div>
+            </div>
+            
+            <!-- Graphiques -->
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <h3>📊 Répartition des transports</h3>
+                    <canvas id="transport-chart"></canvas>
+                </div>
+                
+                <div class="chart-card">
+                    <h3>🌍 Émissions CO₂ par mode</h3>
+                    <canvas id="co2-chart"></canvas>
+                </div>
+                
+                <div class="chart-card">
+                    <h3>📅 Émissions CO₂ par jour de la semaine</h3>
+                    <canvas id="weekday-chart"></canvas>
+                </div>
+            </div>
+            
+            <!-- Carte géographique -->
+            <div class="map-card">
+                <h3>🗺️ Carte des trajets domicile-travail</h3>
+                <div id="company-map"></div>
+            </div>
+            
+            <!-- Tableau top employés -->
+            <div class="table-card">
+                <h3>🏆 Top 10 des employés</h3>
+                <table id="employees-table">
+                    <thead>
+                        <tr>
+                            <th>Rang</th>
+                            <th>Nom</th>
+                            <th>Email</th>
+                            <th>CO₂ (kg)</th>
+                            <th>Distance (km)</th>
+                            <th>Semaines</th>
+                            <th>Validation</th>
+                        </tr>
+                    </thead>
+                    <tbody id="employees-tbody">
+                        <!-- Données dynamiques -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Configuration
+        const urlParams = new URLSearchParams(window.location.search);
+        const COMPANY_ID = parseInt(urlParams.get('company_id') || localStorage.getItem('company_id') || 1);
+        const ACCESS_KEY = urlParams.get('access_key') || localStorage.getItem('access_key') || '';
+        
+        // Sauvegarder dans le localStorage pour la session
+        if (urlParams.get('company_id')) {
+            localStorage.setItem('company_id', COMPANY_ID);
+        }
+        if (urlParams.get('access_key')) {
+            localStorage.setItem('access_key', ACCESS_KEY);
+        }
+        
+        // Vérifier l'authentification
+        async function checkAuth() {
+            if (!ACCESS_KEY) {
+                alert('⚠️ Accès non autorisé. Veuillez utiliser le lien fourni lors de votre inscription.');
+                window.location.href = '/signup.html';
+                return false;
+            }
+            
+            try {
+                const response = await fetch(`/api/v2/companies/${COMPANY_ID}/verify`, {
+                    headers: { 'X-Access-Key': ACCESS_KEY }
+                });
+                
+                if (!response.ok) {
+                    alert('⚠️ Clé d\'accès invalide');
+                    localStorage.clear();
+                    window.location.href = '/signup.html';
+                    return false;
+                }
+                
+                return true;
+            } catch (error) {
+                console.error('Erreur auth:', error);
+                return true; // Continuer en dev
+            }
+        }
+        
+        let currentData = null;
+        let transportChart = null;
+        let co2Chart = null;
+        let weekdayChart = null;
+        let companyMap = null;
+        let heatLayer = null;
+        
+        // Icônes et couleurs des transports
+        const transportConfig = {
+            'voiture_solo': { icon: '🚗', label: 'Voiture solo', color: '#ef4444' },
+            'transports_commun': { icon: '🚌', label: 'Transports en commun', color: '#f97316' },
+            'covoiturage': { icon: '🚗👥', label: 'Covoiturage', color: '#10b981' },
+            'velo': { icon: '🚴', label: 'Vélo', color: '#22c55e' },
+            'train': { icon: '🚄', label: 'Train', color: '#f59e0b' },
+            'teletravail': { icon: '🏠', label: 'Télétravail', color: '#06b6d4' },
+            'marche': { icon: '🚶', label: 'Marche', color: '#84cc16' },
+            'ne_travaille_pas': { icon: '🏖️', label: 'Absent', color: '#9ca3af' }
+        };
+        
+        // Charger le dashboard au démarrage
+        window.addEventListener('load', () => {
+            loadDashboard();
+        });
+        
+        async function loadDashboard() {
+            const startDate = document.getElementById('date-start').value;
+            const endDate = document.getElementById('date-end').value;
+            
+            if (!startDate || !endDate) {
+                alert('Veuillez sélectionner une période');
+                return;
+            }
+            
+            // Afficher le loader
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('dashboard-content').style.display = 'none';
+            
+            try {
+                // Appeler l'API avec les dates personnalisées
+                const response = await fetch(`/api/v2/rse/monthly-recap/company/${COMPANY_ID}?start_date=${startDate}&end_date=${endDate}`);
+                
+                if (!response.ok) {
+                    throw new Error('Erreur lors du chargement des données');
+                }
+                
+                const data = await response.json();
+                currentData = data;
+                
+                // Mettre à jour l'interface
+                updateStats(data.summary);
+                updateCharts(data.transport_breakdown);
+                updateWeekdayChart(data.weekday_breakdown);
+                updateMap(data.map_data);
+                updateEmployeesTable(data.top_employees);
+                document.getElementById('company-name').textContent = data.company.name;
+                
+                // Charger la comparaison mois/mois
+                loadComparison();
+                
+                // Masquer le loader, afficher le contenu
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('dashboard-content').style.display = 'block';
+                
+            } catch (error) {
+                console.error('Erreur:', error);
+                console.error('Message:', error?.message);
+                console.error('Stack:', error?.stack);
+                alert('Impossible de charger les données. Vérifiez votre connexion.');
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+        
+        function setLastMonth() {
+            const now = new Date();
+            const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+            
+            document.getElementById('date-start').value = lastMonth.toISOString().split('T')[0];
+            document.getElementById('date-end').value = lastMonthEnd.toISOString().split('T')[0];
+            
+            loadDashboard();
+        }
+        
+        async function loadComparison() {
+            try {
+                const response = await fetch(`/api/v2/companies/${COMPANY_ID}/monthly-comparison?access_key=${ACCESS_KEY}`);
+                if (!response.ok) return;
+                
+                const data = await response.json();
+                
+                // Afficher la section
+                document.getElementById('comparison-section').style.display = 'block';
+                
+                // Mettre à jour les valeurs
+                function formatVariation(val) {
+                    if (val === null) return { text: 'N/A', class: 'neutral' };
+                    const sign = val > 0 ? '+' : '';
+                    const cssClass = val > 0 ? 'positive' : (val < 0 ? 'negative' : 'neutral');
+                    return { text: `${sign}${val.toFixed(1)}%`, class: cssClass };
+                }
+                
+                const co2Var = formatVariation(data.variations.co2);
+                const distVar = formatVariation(data.variations.distance);
+                const empVar = formatVariation(data.variations.employees);
+                
+                const co2El = document.getElementById('comparison-co2');
+                co2El.textContent = co2Var.text;
+                co2El.className = `comparison-value ${co2Var.class}`;
+                
+                const distEl = document.getElementById('comparison-distance');
+                distEl.textContent = distVar.text;
+                distEl.className = `comparison-value ${distVar.class}`;
+                
+                const empEl = document.getElementById('comparison-employees');
+                empEl.textContent = empVar.text;
+                empEl.className = `comparison-value ${empVar.class}`;
+                
+                document.getElementById('comparison-prev-month').textContent = 
+                    `${data.previous_month.name} ${data.previous_month.year}`;
+                document.getElementById('comparison-prev-co2').textContent = 
+                    data.previous_month.co2_kg.toFixed(1);
+                    
+            } catch (e) {
+                console.warn('Comparaison non disponible:', e);
+            }
+        }
+        
+        function downloadPDF() {
+            const startDate = document.getElementById('date-start').value;
+            if (!startDate) {
+                alert('Sélectionnez une période d\'abord');
+                return;
+            }
+            
+            // Extraire le mois de la date de début
+            const month = startDate.substring(0, 7); // YYYY-MM
+            
+            // Ouvrir le PDF dans un nouvel onglet
+            window.open(`/api/v2/companies/${COMPANY_ID}/report-pdf?access_key=${ACCESS_KEY}&month=${month}`, '_blank');
+        }
+        
+        function updateStats(summary) {
+            document.getElementById('stat-employees').textContent = summary.active_employees;
+            document.getElementById('stat-co2').textContent = summary.total_co2_kg.toLocaleString('fr-FR');
+            document.getElementById('stat-distance').textContent = summary.total_distance_km.toLocaleString('fr-FR');
+            document.getElementById('stat-avg').textContent = summary.avg_co2_per_employee.toLocaleString('fr-FR');
+        }
+        
+        function updateCharts(transportBreakdown) {
+            // Préparer les données
+            const modes = Object.keys(transportBreakdown);
+            const tripsConfirmed = modes.map(m => transportBreakdown[m].confirmed?.trips || 0);
+            const tripsUnconfirmed = modes.map(m => transportBreakdown[m].unconfirmed?.trips || 0);
+            const tripsTotal = modes.map((m, i) => tripsConfirmed[i] + tripsUnconfirmed[i]);
+            const co2Confirmed = modes.map(m => transportBreakdown[m].confirmed?.co2_kg || 0);
+            const co2Unconfirmed = modes.map(m => transportBreakdown[m].unconfirmed?.co2_kg || 0);
+            const baseLabels = modes.map(m => transportConfig[m]?.label || m);
+            
+            // Couleurs pleines
+            const colors = modes.map(m => transportConfig[m]?.color || '#9ca3af');
+            
+            // Couleurs transparentes (30% opacité)
+            const colorsTransparent = modes.map(m => {
+                const color = transportConfig[m]?.color || '#9ca3af';
+                if (color.startsWith('#')) {
+                    const r = parseInt(color.slice(1,3), 16);
+                    const g = parseInt(color.slice(3,5), 16);
+                    const b = parseInt(color.slice(5,7), 16);
+                    return `rgba(${r}, ${g}, ${b}, 0.3)`;
+                }
+                return color;
+            });
+            
+            // Créer les segments alternés : [confirmé mode1, non-confirmé mode1, confirmé mode2, ...]
+            const segmentData = [];
+            const segmentColors = [];
+            const segmentLabels = [];
+            const segmentModes = [];
+            
+            modes.forEach((m, i) => {
+                const label = baseLabels[i];
+                // Segment confirmé (plein)
+                if (tripsConfirmed[i] > 0) {
+                    segmentData.push(tripsConfirmed[i]);
+                    segmentColors.push(colors[i]);
+                    segmentLabels.push(label + ' ✓');
+                    segmentModes.push({ mode: m, type: 'confirmed', total: tripsTotal[i], confirmed: tripsConfirmed[i] });
+                }
+                // Segment non confirmé (transparent)
+                if (tripsUnconfirmed[i] > 0) {
+                    segmentData.push(tripsUnconfirmed[i]);
+                    segmentColors.push(colorsTransparent[i]);
+                    segmentLabels.push(label + ' ○');
+                    segmentModes.push({ mode: m, type: 'unconfirmed', total: tripsTotal[i], confirmed: tripsConfirmed[i] });
+                }
+            });
+            
+            // Graphique répartition des trajets - segments confirmés/non-confirmés adjacents
+            const ctx1 = document.getElementById('transport-chart').getContext('2d');
+            if (transportChart) transportChart.destroy();
+            transportChart = new Chart(ctx1, {
+                type: 'doughnut',
+                data: {
+                    labels: segmentLabels,
+                    datasets: [{
+                        data: segmentData,
+                        backgroundColor: segmentColors,
+                        borderWidth: 2,
+                        borderColor: 'white'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: {
+                            display: false // Masquer la légende (trop de segments)
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const idx = context.dataIndex;
+                                    const info = segmentModes[idx];
+                                    const label = transportConfig[info.mode]?.label || info.mode;
+                                    const status = info.type === 'confirmed' ? 'validés' : 'non validés';
+                                    return `${label}: ${context.parsed} trajets ${status}`;
+                                },
+                                afterLabel: function(context) {
+                                    const idx = context.dataIndex;
+                                    const info = segmentModes[idx];
+                                    const pct = info.total > 0 ? Math.round(info.confirmed / info.total * 100) : 0;
+                                    return `(${pct}% validés sur ${info.total} total)`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            
+            // Graphique CO2 par mode (barres empilées)
+            const ctx2 = document.getElementById('co2-chart').getContext('2d');
+            if (co2Chart) co2Chart.destroy();
+            co2Chart = new Chart(ctx2, {
+                type: 'bar',
+                data: {
+                    labels: baseLabels,
+                    datasets: [
+                        {
+                            label: 'CO₂ confirmé (kg)',
+                            data: co2Confirmed,
+                            backgroundColor: colors,
+                            borderRadius: 8
+                        },
+                        {
+                            label: 'CO₂ non confirmé (kg)',
+                            data: co2Unconfirmed,
+                            backgroundColor: colorsTransparent,
+                            borderRadius: 8
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: { 
+                            display: true,
+                            position: 'top'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return `${context.dataset.label}: ${context.parsed.y.toFixed(2)} kg`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { stacked: true },
+                        y: {
+                            stacked: true,
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return value + ' kg';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        function updateWeekdayChart(weekdayBreakdown) {
+            const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'];
+            const labels = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi'];
+            const confirmed = days.map(d => weekdayBreakdown[d]?.confirmed_co2_kg || 0);
+            const unconfirmed = days.map(d => weekdayBreakdown[d]?.unconfirmed_co2_kg || 0);
+            
+            const ctx = document.getElementById('weekday-chart').getContext('2d');
+            if (weekdayChart) weekdayChart.destroy();
+            weekdayChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'CO₂ confirmé (kg)',
+                            data: confirmed,
+                            backgroundColor: '#10b981',
+                            borderRadius: 8
+                        },
+                        {
+                            label: 'CO₂ non confirmé (kg)',
+                            data: unconfirmed,
+                            backgroundColor: 'rgba(16, 185, 129, 0.3)',
+                            borderRadius: 8
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: { 
+                            display: true,
+                            position: 'top'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return `${context.dataset.label}: ${context.parsed.y.toFixed(2)} kg`;
+                                },
+                                afterBody: function(context) {
+                                    const dayIndex = context[0].dataIndex;
+                                    const day = days[dayIndex];
+                                    const trips = weekdayBreakdown[day]?.trips || 0;
+                                    return `Total trajets: ${trips}`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { stacked: true },
+                        y: {
+                            stacked: true,
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return value + ' kg';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        function updateMap(mapData) {
+            // Initialiser la carte si pas encore fait
+            if (!companyMap) {
+                companyMap = L.map('company-map').setView([48.8566, 2.3522], 6); // Centre sur la France par défaut
+                
+                // Style de carte élégant (CartoDB Positron)
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+                    attribution: '© OpenStreetMap contributors © CARTO',
+                    subdomains: 'abcd',
+                    maxZoom: 20
+                }).addTo(companyMap);
+                
+                // Fix pour le problème de carte grisée
+                setTimeout(() => {
+                    companyMap.invalidateSize();
+                }, 100);
+            } else {
+                // D'abord supprimer l'ancienne heatmap AVANT invalidateSize
+                if (heatLayer) {
+                    companyMap.removeLayer(heatLayer);
+                    heatLayer = null;
+                }
+                
+                // Nettoyer TOUS les layers (marqueurs ET heatmaps résiduels)
+                companyMap.eachLayer(layer => {
+                    if (layer instanceof L.Marker || layer instanceof L.HeatLayer) {
+                        companyMap.removeLayer(layer);
+                    }
+                });
+                
+                // Recalculer la taille avec délai (protégé contre erreurs)
+                setTimeout(() => {
+                    try {
+                        companyMap.invalidateSize();
+                    } catch (e) {
+                        console.warn('Erreur invalidateSize ignorée:', e.message);
+                    }
+                }, 100);
+            }
+            
+            // Ajouter les pins des sites de l'entreprise
+            const bounds = [];
+            
+            if (mapData.company_sites && mapData.company_sites.length > 0) {
+                mapData.company_sites.forEach(site => {
+                    if (site.latitude && site.longitude) {
+                        const marker = L.marker([site.latitude, site.longitude], {
+                            icon: L.icon({
+                                iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+                                shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
+                                iconSize: [25, 41],
+                                iconAnchor: [12, 41],
+                                popupAnchor: [1, -34],
+                                shadowSize: [41, 41]
+                            })
+                        }).addTo(companyMap);
+                        
+                        marker.bindPopup(`<b>🏢 ${site.name}</b><br>${site.address || ''}`);
+                        bounds.push([site.latitude, site.longitude]);
+                    }
+                });
+            }
+            
+            // Préparer les données pour la heatmap (mais ne pas l'ajouter tout de suite)
+            let heatPoints = [];
+            if (mapData.employee_locations && mapData.employee_locations.length > 0) {
+                console.log('🔥 Préparation heatmap avec', mapData.employee_locations.length, 'employé(s)');
+                
+                heatPoints = mapData.employee_locations.map(loc => {
+                    console.log('  Point:', loc.latitude, loc.longitude);
+                    return [loc.latitude, loc.longitude, 1];
+                });
+                
+                // Ajouter tous les points aux bounds
+                mapData.employee_locations.forEach(loc => {
+                    bounds.push([loc.latitude, loc.longitude]);
+                });
+            }
+            
+            // Ajuster la vue pour inclure tous les points (protégé contre erreurs heatmap)
+            if (bounds.length > 0) {
+                try {
+                    companyMap.fitBounds(bounds, { padding: [50, 50] });
+                } catch (e) {
+                    console.warn('Erreur fitBounds ignorée:', e.message);
+                }
+            } else {
+                // Pas de données, afficher message
+                L.popup()
+                    .setLatLng([48.8566, 2.3522])
+                    .setContent('<p>📍 Aucun site enregistré pour cette entreprise</p>')
+                    .openOn(companyMap);
+            }
+            
+            // Ajouter la heatmap après un délai pour que la carte ait ses dimensions finales
+            setTimeout(() => {
+                // Maintenant que la carte a une taille, on peut ajouter la heatmap
+                if (heatPoints.length > 0) {
+                    try {
+                        heatLayer = L.heatLayer(heatPoints, {
+                            radius: 25,
+                            blur: 35,
+                            maxZoom: 13,
+                            max: 1.0,
+                            gradient: {
+                                0.0: 'blue',
+                                0.5: 'lime',
+                                0.7: 'yellow',
+                                0.9: 'orange',
+                                1.0: 'red'
+                            }
+                        }).addTo(companyMap);
+                        console.log('✅ Heatmap ajoutée à la carte');
+                    } catch (e) {
+                        console.error('❌ Erreur création heatmap:', e);
+                    }
+                }
+            }, 1000);
+        }
+        
+        function updateEmployeesTable(employees) {
+            const tbody = document.getElementById('employees-tbody');
+            tbody.innerHTML = '';
+            
+            employees.forEach((emp, index) => {
+                const row = document.createElement('tr');
+                
+                // Calcul du taux de validation - protection contre undefined/null
+                const validationRate = parseFloat(emp.validation_rate) || 0;
+                let validationBadge = 'low';
+                if (validationRate >= 80) validationBadge = 'high';
+                else if (validationRate >= 50) validationBadge = 'medium';
+                
+                // Affichage CO2 avec indication confirmé/total
+                const confirmedCo2 = parseFloat(emp.confirmed_co2_kg) || 0;
+                const totalCo2 = parseFloat(emp.co2_kg) || 0;
+                const co2Display = confirmedCo2 < totalCo2 
+                    ? `<strong>${totalCo2.toFixed(2)} kg</strong><br><small style="color:#64748b;">(${confirmedCo2.toFixed(2)} kg validés)</small>`
+                    : `<strong>${totalCo2.toFixed(2)} kg</strong>`;
+                
+                row.innerHTML = `
+                    <td><strong>#${index + 1}</strong></td>
+                    <td>${emp.name}</td>
+                    <td style="color: #64748b;">${emp.email}</td>
+                    <td>${co2Display}</td>
+                    <td>${(emp.distance_km || 0).toFixed(0)} km</td>
+                    <td>${emp.confirmed_weeks || 0}/${emp.weeks || 0}</td>
+                    <td><span class="badge ${validationBadge}">${validationRate.toFixed(0)}%</span></td>
+                `;
+                
+                tbody.appendChild(row);
+            });
+        }
+        
+        function exportExcel() {
+            if (!currentData) {
+                alert('Aucune donnée à exporter');
+                return;
+            }
+            
+            // Générer un CSV simple
+            let csv = 'Nom,Email,CO2 (kg),Distance (km),Semaines\n';
+            currentData.top_employees.forEach(emp => {
+                csv += `${emp.name},${emp.email},${emp.co2_kg},${emp.distance_km},${emp.weeks}\n`;
+            });
+            
+            // Télécharger
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `rapport-rse-${currentData.period.year}-${currentData.period.month}.csv`;
+            link.click();
+        }
+        
+        function exportPDF() {
+            alert('Export PDF en cours de développement. Utilisez "Imprimer" (Ctrl+P) pour générer un PDF via votre navigateur.');
+            window.print();
+        }
+        
+        function logout() {
+            if (confirm('Voulez-vous vraiment vous déconnecter ?')) {
+                window.location.href = '/';
+            }
+        }
+        
+        // Initialiser avec le mois dernier par défaut
+        setLastMonth();
+    </script>
+</body>
+</html>

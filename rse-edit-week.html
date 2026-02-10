@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modifier mes trajets - Carette RSE</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 32px;
+        }
+        
+        .header h1 {
+            font-size: 36px;
+            font-weight: 900;
+            margin-bottom: 8px;
+        }
+        
+        .header p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            margin-bottom: 20px;
+        }
+        
+        .week-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #1f2937;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .days-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 16px;
+        }
+        
+        @media (max-width: 1024px) {
+            .days-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+        
+        @media (max-width: 640px) {
+            .days-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        
+        .day-row {
+            background: #f9fafb;
+            border-radius: 12px;
+            padding: 16px;
+            border: 2px solid #e5e7eb;
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .day-row:hover {
+            border-color: #667eea;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.1);
+        }
+        
+        .day-header {
+            font-size: 14px;
+            font-weight: 700;
+            color: #1f2937;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+        
+        .day-date {
+            font-size: 11px;
+            color: #6b7280;
+            font-weight: 400;
+            display: block;
+        }
+        
+        .transport-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .transport-info {
+            display: none;
+        }
+        
+        .transport-button {
+            background: white;
+            border: 3px solid #667eea;
+            border-radius: 16px;
+            padding: 16px 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            width: 100%;
+            box-shadow: 0 2px 8px rgba(102, 126, 234, 0.15);
+        }
+        
+        .transport-button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 16px rgba(102, 126, 234, 0.3);
+        }
+        
+        .transport-button:active {
+            transform: scale(0.98);
+        }
+        
+        .transport-button .emoji {
+            font-size: 40px;
+            line-height: 1;
+        }
+        
+        .transport-button .name {
+            font-size: 12px;
+            font-weight: 600;
+            color: #1f2937;
+            text-align: center;
+            line-height: 1.2;
+        }
+        
+        .transport-button .hint {
+            font-size: 10px;
+            color: #9ca3af;
+            text-align: center;
+        }
+        
+        .transport-icon {
+            font-size: 32px;
+            margin-bottom: 4px;
+        }
+        
+        .transport-name {
+            font-size: 12px;
+            font-weight: 600;
+            color: #374151;
+        }
+        
+        .co2-summary {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            border-radius: 12px;
+            padding: 24px;
+            text-align: center;
+            color: white;
+        }
+        
+        .co2-value {
+            font-size: 48px;
+            font-weight: 900;
+            margin-bottom: 8px;
+        }
+        
+        .co2-label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+        
+        .btn {
+            flex: 1;
+            padding: 16px 24px;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 700;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            border: none;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn-secondary {
+            background: #f3f4f6;
+            color: #374151;
+        }
+        
+        .btn-secondary:hover {
+            background: #e5e7eb;
+        }
+        
+        .success-message {
+            display: none;
+            background: #d1fae5;
+            border: 2px solid #10b981;
+            border-radius: 12px;
+            padding: 32px;
+            text-align: center;
+            margin-top: 24px;
+        }
+        
+        .success-message.show {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🌱 Modifier mes trajets</h1>
+            <p>Ajustez vos déplacements de la semaine avant validation</p>
+        </div>
+        
+        <div class="card">
+            <div class="week-title">
+                <span>📅</span>
+                <span id="week-range">Semaine du ...</span>
+            </div>
+            
+            <div id="days-container" class="days-grid">
+                <!-- Les jours seront générés dynamiquement -->
+            </div>
+            
+            <div class="co2-summary" style="margin-top: 30px;">
+                <div class="co2-value" id="total-co2">0 kg</div>
+                <div class="co2-label">Émissions CO₂ totales de la semaine</div>
+            </div>
+            
+            <div style="background: #fef3c7; border-radius: 12px; padding: 20px; margin-top: 20px; border-left: 4px solid #f59e0b;">
+                <label style="display: flex; align-items: center; cursor: pointer; margin: 0;">
+                    <input type="checkbox" id="save-as-habits" style="width: 20px; height: 20px; margin-right: 12px; cursor: pointer;">
+                    <span style="font-size: 15px; color: #92400e; font-weight: 500;">
+                        💾 Enregistrer ces trajets comme mes nouvelles habitudes par défaut
+                    </span>
+                </label>
+                <p style="margin: 12px 0 0 32px; font-size: 13px; color: #92400e; line-height: 1.5;">
+                    Si vous cochez cette case, vos prochaines semaines utiliseront automatiquement ces moyens de transport.
+                </p>
+            </div>
+            
+            <div class="action-buttons">
+                <button class="btn btn-primary" onclick="saveAndValidate()">
+                    ✅ Valider mes trajets
+                </button>
+                <a href="mailto:support@carette.fr" class="btn btn-secondary">
+                    ✉️ Contacter le support
+                </a>
+            </div>
+            
+            <div id="success-message" class="success-message">
+                <div style="font-size: 48px; margin-bottom: 12px;">✓</div>
+                <div style="font-size: 18px; font-weight: 700; color: #065f46; margin-bottom: 8px;">
+                    Trajets validés avec succès !
+                </div>
+                <div style="font-size: 14px; color: #047857;">
+                    Vos données ont été enregistrées. Rendez-vous vendredi prochain !
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Configuration des transports
+        const transports = {
+            voiture_solo: { icon: '🚗', name: 'Voiture solo', co2: 0.220 },
+            transports_commun: { icon: '🚌', name: 'Transports', co2: 0.050 },
+            covoiturage: { icon: '👥', name: 'Covoiturage', co2: 0.055 },
+            velo: { icon: '🚴', name: 'Vélo', co2: 0.000 },
+            train: { icon: '🚄', name: 'Train', co2: 0.025 },
+            teletravail: { icon: '🏠', name: 'Télétravail', co2: 0.000 },
+            marche: { icon: '🚶', name: 'Marche', co2: 0.000 },
+            absent: { icon: '✖️', name: 'Absent', co2: 0.000 }
+        };
+        
+        // Données de la semaine (chargées depuis l'API)
+        let weekData = null;
+        let apiToken = null;
+        
+        // Initialisation
+        async function init() {
+            // Charger le token depuis l'URL
+            const urlParams = new URLSearchParams(window.location.search);
+            apiToken = urlParams.get('token');
+            
+            if (!apiToken) {
+                alert('Token manquant. Utilisez le lien depuis votre email.');
+                return;
+            }
+            
+            // Charger les données depuis l'API
+            try {
+                const response = await fetch(`/api/v2/rse/weekly-data/${apiToken}`);
+                
+                if (!response.ok) {
+                    throw new Error('Impossible de charger les données');
+                }
+                
+                weekData = await response.json();
+                
+                if (weekData.confirmed) {
+                    // Afficher un message si déjà confirmé
+                    document.querySelector('.container').innerHTML = `
+                        <div class="card" style="text-align: center; padding: 60px 32px;">
+                            <div style="font-size: 64px; margin-bottom: 20px;">✓</div>
+                            <h1 style="color: #1f2937; font-size: 28px; margin-bottom: 16px;">
+                                Déjà validé
+                            </h1>
+                            <p style="color: #6b7280; font-size: 16px;">
+                                Vous avez déjà confirmé vos trajets pour cette semaine.
+                            </p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                // Afficher la période
+                document.getElementById('week-range').textContent = 
+                    `Semaine du ${formatDate(weekData.week_start)} au ${formatDate(weekData.week_end)}`;
+                
+                // Générer les jours
+                renderDays();
+                
+                // Calculer le CO2 initial
+                updateCO2();
+                
+            } catch (error) {
+                console.error('Erreur chargement:', error);
+                alert('Impossible de charger vos données. Veuillez réessayer plus tard.');
+            }
+        }
+        
+        function formatDate(dateStr) {
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+        }
+        
+        function renderDays() {
+            const container = document.getElementById('days-container');
+            container.innerHTML = '';
+            
+            weekData.days.forEach((day, index) => {
+                const currentTransport = day.transport_mode || 'voiture_solo';
+                const transport = transports[currentTransport];
+                
+                const dayDiv = document.createElement('div');
+                dayDiv.className = 'day-row';
+                dayDiv.innerHTML = `
+                    <div class="day-header">
+                        ${day.day_name}<br>
+                        <span class="day-date">${formatDate(day.date)}</span>
+                    </div>
+                    
+                    <div class="transport-section">
+                        <div class="transport-button" onclick="cycleTransport(${index})" id="transport-btn-${index}" data-current="${currentTransport}">
+                            <div class="emoji">${transport.icon}</div>
+                            <div class="name">${transport.name}</div>
+                            <div class="hint">👆 Cliquer</div>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(dayDiv);
+            });
+        }
+        
+        function cycleTransport(dayIndex) {
+            const btn = document.getElementById(`transport-btn-${dayIndex}`);
+            const currentMode = btn.getAttribute('data-current');
+            
+            // Liste des modes dans l'ordre
+            const modes = Object.keys(transports);
+            const currentIndex = modes.indexOf(currentMode);
+            const nextIndex = (currentIndex + 1) % modes.length;
+            const nextMode = modes[nextIndex];
+            const nextTransport = transports[nextMode];
+            
+            // Mettre à jour le bouton
+            btn.setAttribute('data-current', nextMode);
+            btn.innerHTML = `
+                <div class="emoji">${nextTransport.icon}</div>
+                <div class="name">${nextTransport.name}</div>
+                <div class="hint">👆 Cliquer</div>
+            `;
+            
+            // Mettre à jour les données de la semaine
+            weekData.days[dayIndex].transport_mode = nextMode;
+            
+            // Recalculer le CO2
+            updateCO2();
+        }
+        
+        function updateCO2() {
+            let totalCO2 = 0;
+            const distance = weekData.distance_km;
+            
+            weekData.days.forEach((day, index) => {
+                const btn = document.getElementById(`transport-btn-${index}`);
+                if (btn) {
+                    const transportMode = btn.getAttribute('data-current');
+                    const transportCO2 = transports[transportMode].co2;
+                    totalCO2 += transportCO2 * distance * 2;  // Aller-retour
+                }
+            });
+            
+            document.getElementById('total-co2').textContent = `${totalCO2.toFixed(1)} kg`;
+        }
+        
+        async function saveAndValidate() {
+            if (!weekData || !apiToken) {
+                alert('Données manquantes');
+                return;
+            }
+            
+            // Désactiver le bouton pendant la sauvegarde
+            const saveBtn = document.querySelector('.btn-primary');
+            saveBtn.disabled = true;
+            saveBtn.textContent = '⏳ Sauvegarde en cours...';
+            
+            // Récupérer les données modifiées
+            const updatedDays = weekData.days.map((day, index) => {
+                const btn = document.getElementById(`transport-btn-${index}`);
+                const transportMode = btn ? btn.getAttribute('data-current') : 'voiture_solo';
+                
+                return {
+                    date: day.date,
+                    day_name: day.day_name,
+                    transport_mode: transportMode
+                };
+            });
+            
+            // Récupérer l'état de la checkbox "sauvegarder comme habitudes"
+            const saveAsHabits = document.getElementById('save-as-habits')?.checked || false;
+            
+            try {
+                // Sauvegarder via l'API
+                const saveResponse = await fetch(`/api/v2/rse/weekly-data/${apiToken}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        days: updatedDays,
+                        save_as_habits: saveAsHabits
+                    })
+                });
+                
+                if (!saveResponse.ok) {
+                    throw new Error('Erreur de sauvegarde');
+                }
+                
+                const saveResult = await saveResponse.json();
+                console.log('Données sauvegardées:', saveResult);
+                
+                // Confirmer les trajets
+                window.location.href = `/api/v2/rse/weekly-confirm?token=${apiToken}`;
+                
+            } catch (error) {
+                console.error('Erreur:', error);
+                alert('Erreur lors de la sauvegarde. Veuillez réessayer.');
+                saveBtn.disabled = false;
+                saveBtn.textContent = '✅ Valider mes trajets';
+            }
+        }
+        
+        // Lancer l'initialisation au chargement
+        init();
+    </script>
+</body>
+</html>

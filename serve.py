@@ -17,7 +17,7 @@ from backend.api import app as backend_app
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Fichiers autorisés pour l'accès public
-ALLOWED_FILES = {'demo.html', 'demo-recurrent.html', 'index.md'}
+ALLOWED_FILES = {'demo.html', 'demo-recurrent.html', 'demo-rse.html', 'index.md'}
 ALLOWED_EXTENSIONS = {'.html', '.js', '.css', '.md', '.json', '.png', '.jpg', '.jpeg', '.svg', '.ico'}
 
 def is_safe_path(base, path, follow_symlinks=True):
@@ -43,6 +43,67 @@ def demo_recurrent():
     if not os.path.exists(file_path) or not is_safe_path(BASE_DIR, file_path):
         abort(404)
     return send_from_directory(BASE_DIR, 'demo-recurrent.html')
+
+@backend_app.route('/demo-rse.html')
+def demo_rse():
+    """Page de démonstration mode RSE"""
+    file_path = os.path.join(BASE_DIR, 'demo-rse.html')
+    if not os.path.exists(file_path) or not is_safe_path(BASE_DIR, file_path):
+        abort(404)
+    return send_from_directory(BASE_DIR, 'demo-rse.html')
+
+@backend_app.route('/rse-edit-week.html')
+def rse_edit_week():
+    """Page d'édition hebdomadaire RSE (magic link)"""
+    file_path = os.path.join(BASE_DIR, 'rse-edit-week.html')
+    if not os.path.exists(file_path) or not is_safe_path(BASE_DIR, file_path):
+        abort(404)
+    return send_from_directory(BASE_DIR, 'rse-edit-week.html')
+
+@backend_app.route('/landing.html')
+@backend_app.route('/index.html')
+def landing():
+    """Landing page commerciale"""
+    file_path = os.path.join(BASE_DIR, 'landing.html')
+    if not os.path.exists(file_path) or not is_safe_path(BASE_DIR, file_path):
+        abort(404)
+    return send_from_directory(BASE_DIR, 'landing.html')
+
+@backend_app.route('/dashboard-company.html')
+def dashboard_company():
+    """Dashboard entreprise"""
+    file_path = os.path.join(BASE_DIR, 'dashboard-company.html')
+    if not os.path.exists(file_path) or not is_safe_path(BASE_DIR, file_path):
+        abort(404)
+    return send_from_directory(BASE_DIR, 'dashboard-company.html')
+
+@backend_app.route('/signup.html')
+@backend_app.route('/signup')
+def signup():
+    """Formulaire d'inscription entreprise"""
+    file_path = os.path.join(BASE_DIR, 'signup.html')
+    if not os.path.exists(file_path) or not is_safe_path(BASE_DIR, file_path):
+        abort(404)
+    return send_from_directory(BASE_DIR, 'signup.html')
+
+@backend_app.route('/manage-employees-new.html')
+@backend_app.route('/manage-employees.html')
+def manage_employees():
+    """Page de gestion des employés"""
+    file_path = os.path.join(BASE_DIR, 'manage-employees-new.html')
+    if not os.path.exists(file_path) or not is_safe_path(BASE_DIR, file_path):
+        abort(404)
+    return send_from_directory(BASE_DIR, 'manage-employees-new.html')
+
+@backend_app.route('/legal/<path:filename>')
+def legal_pages(filename):
+    """Pages légales"""
+    if filename.startswith('.') or '..' in filename:
+        abort(404)
+    file_path = safe_join(os.path.join(BASE_DIR, 'legal'), filename)
+    if not file_path or not os.path.exists(file_path) or not is_safe_path(os.path.join(BASE_DIR, 'legal'), file_path):
+        abort(404)
+    return send_from_directory(os.path.join(BASE_DIR, 'legal'), filename)
 
 @backend_app.route('/frontend/<path:filename>')
 def frontend(filename):

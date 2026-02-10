@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carette - Réduisez l'empreinte carbone de vos trajets domicile-travail</title>
+    <meta name="description" content="Solution RSE pour mesurer et réduire les émissions CO2 des déplacements domicile-travail. Conforme CSRD, rapports automatisés, facile à déployer.">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #1e293b;
+        }
+        
+        /* Navbar */
+        .navbar {
+            background: white;
+            padding: 20px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .nav-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            font-size: 28px;
+            font-weight: 900;
+            color: #667eea;
+        }
+        
+        .nav-links {
+            display: flex;
+            gap: 32px;
+            align-items: center;
+        }
+        
+        .nav-links a {
+            text-decoration: none;
+            color: #475569;
+            font-weight: 500;
+            transition: color 0.3s;
+        }
+        
+        .nav-links a:hover {
+            color: #667eea;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-outline {
+            border: 2px solid #667eea;
+            color: #667eea;
+            background: transparent;
+        }
+        
+        .btn-outline:hover {
+            background: #667eea;
+            color: white;
+        }
+        
+        /* Hero Section */
+        .hero {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 100px 20px;
+            text-align: center;
+        }
+        
+        .hero-container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        
+        .hero h1 {
+            font-size: 56px;
+            font-weight: 900;
+            margin-bottom: 24px;
+            line-height: 1.2;
+        }
+        
+        .hero p {
+            font-size: 20px;
+            margin-bottom: 40px;
+            opacity: 0.95;
+            max-width: 700px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        .hero-cta {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        
+        .btn-hero {
+            padding: 16px 40px;
+            font-size: 18px;
+        }
+        
+        .btn-white {
+            background: white;
+            color: #667eea;
+        }
+        
+        .btn-white:hover {
+            background: #f8fafc;
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(255,255,255,0.3);
+        }
+        
+        /* Features Section */
+        .features {
+            padding: 80px 20px;
+            background: white;
+        }
+        
+        .section-container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .section-header {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+        
+        .section-header h2 {
+            font-size: 42px;
+            font-weight: 900;
+            margin-bottom: 16px;
+        }
+        
+        .section-header p {
+            font-size: 18px;
+            color: #64748b;
+        }
+        
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 40px;
+        }
+        
+        .feature-card {
+            text-align: center;
+            padding: 32px;
+            border-radius: 16px;
+            transition: all 0.3s;
+        }
+        
+        .feature-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 12px 40px rgba(0,0,0,0.1);
+        }
+        
+        .feature-icon {
+            font-size: 64px;
+            margin-bottom: 24px;
+        }
+        
+        .feature-card h3 {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+        
+        .feature-card p {
+            color: #64748b;
+            font-size: 16px;
+        }
+        
+        /* Pricing Section */
+        .pricing {
+            padding: 80px 20px;
+            background: linear-gradient(to bottom, #f8fafc, white);
+        }
+        
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 32px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .pricing-card {
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+            text-align: center;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+        
+        .pricing-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 12px 40px rgba(102, 126, 234, 0.2);
+            border-color: #667eea;
+        }
+        
+        .pricing-card.featured {
+            border-color: #667eea;
+            transform: scale(1.05);
+        }
+        
+        .pricing-badge {
+            background: #667eea;
+            color: white;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            display: inline-block;
+            margin-bottom: 16px;
+        }
+        
+        .pricing-card h3 {
+            font-size: 28px;
+            font-weight: 800;
+            margin-bottom: 8px;
+        }
+        
+        .pricing-card .price {
+            font-size: 48px;
+            font-weight: 900;
+            color: #667eea;
+            margin: 20px 0;
+        }
+        
+        .pricing-card .price span {
+            font-size: 20px;
+            color: #64748b;
+        }
+        
+        .pricing-features {
+            list-style: none;
+            margin: 32px 0;
+            text-align: left;
+        }
+        
+        .pricing-features li {
+            padding: 12px 0;
+            border-bottom: 1px solid #f1f5f9;
+            color: #475569;
+        }
+        
+        .pricing-features li:before {
+            content: '✅ ';
+            margin-right: 8px;
+        }
+        
+        /* Testimonials */
+        .testimonials {
+            padding: 80px 20px;
+            background: white;
+        }
+        
+        .testimonials-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 32px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .testimonial-card {
+            background: #f8fafc;
+            padding: 32px;
+            border-radius: 16px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .testimonial-text {
+            font-size: 16px;
+            font-style: italic;
+            color: #475569;
+            margin-bottom: 24px;
+        }
+        
+        .testimonial-author {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        
+        .author-avatar {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 700;
+            font-size: 20px;
+        }
+        
+        .author-info h4 {
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        
+        .author-info p {
+            color: #64748b;
+            font-size: 14px;
+        }
+        
+        /* CTA Section */
+        .cta {
+            padding: 100px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            text-align: center;
+        }
+        
+        .cta h2 {
+            font-size: 42px;
+            font-weight: 900;
+            margin-bottom: 24px;
+        }
+        
+        .cta p {
+            font-size: 20px;
+            margin-bottom: 40px;
+            opacity: 0.95;
+        }
+        
+        /* Footer */
+        .footer {
+            background: #1e293b;
+            color: white;
+            padding: 60px 20px 20px;
+        }
+        
+        .footer-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 40px;
+            margin-bottom: 40px;
+        }
+        
+        .footer h4 {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+        
+        .footer ul {
+            list-style: none;
+        }
+        
+        .footer ul li {
+            margin-bottom: 12px;
+        }
+        
+        .footer a {
+            color: #94a3b8;
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        
+        .footer a:hover {
+            color: white;
+        }
+        
+        .footer-bottom {
+            text-align: center;
+            padding-top: 20px;
+            border-top: 1px solid #334155;
+            color: #94a3b8;
+        }
+        
+        @media (max-width: 768px) {
+            .hero h1 { font-size: 36px; }
+            .section-header h2 { font-size: 32px; }
+            .pricing-card.featured { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+    <!-- Navbar -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="logo">🚗 Carette</div>
+            <div class="nav-links">
+                <a href="#features">Fonctionnalités</a>
+                <a href="#pricing">Tarifs</a>
+                <a href="#testimonials">Témoignages</a>
+                <a href="/login-company.html" class="btn btn-outline">Connexion</a>
+            </div>
+        </div>
+    </nav>
+    
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-container">
+            <h1>Mesurez et réduisez l'empreinte carbone de vos déplacements</h1>
+            <p>Solution RSE automatisée pour tracker les trajets domicile-travail de vos employés. Rapports mensuels, conformité CSRD, déploiement en 5 minutes.</p>
+            <div class="hero-cta">
+                <a href="#demo" class="btn btn-hero btn-white">Essai gratuit</a>
+                <a href="#pricing" class="btn btn-hero btn-outline">Voir les tarifs</a>
+            </div>
+        </div>
+    </section>
+    
+    <!-- Features Section -->
+    <section id="features" class="features">
+        <div class="section-container">
+            <div class="section-header">
+                <h2>Pourquoi choisir Carette ?</h2>
+                <p>Simplifiez votre reporting RSE avec une solution clé en main</p>
+            </div>
+            
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">⚡</div>
+                    <h3>Déploiement instantané</h3>
+                    <p>Intégrez le widget en 5 minutes dans votre intranet. Aucune installation complexe requise.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">📊</div>
+                    <h3>Rapports automatisés</h3>
+                    <p>Recevez des rapports mensuels complets avec graphiques et export Excel/PDF pour vos bilans RSE.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🌍</div>
+                    <h3>Calculs CO2 précis</h3>
+                    <p>Facteurs d'émission officiels (ADEME) pour 8 modes de transport, avec calcul automatique aller-retour.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">📧</div>
+                    <h3>Emails hebdomadaires</h3>
+                    <p>Vos employés reçoivent chaque vendredi un récap à confirmer en 1 clic. Taux de réponse >85%.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🔒</div>
+                    <h3>Conforme RGPD</h3>
+                    <p>Données hébergées en France, chiffrement SSL, politique de confidentialité complète.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🎯</div>
+                    <h3>Conforme CSRD</h3>
+                    <p>Répondez aux exigences de la directive européenne sur le reporting de durabilité.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+    
+    <!-- Pricing Section -->
+    <section id="pricing" class="pricing">
+        <div class="section-container">
+            <div class="section-header">
+                <h2>Tarification simple et transparente</h2>
+                <p>Pas de frais cachés, annulation à tout moment</p>
+            </div>
+            
+            <div class="pricing-grid">
+                <div class="pricing-card">
+                    <h3>Starter</h3>
+                    <div class="price">0€<span>/mois</span></div>
+                    <p>Parfait pour tester</p>
+                    <ul class="pricing-features">
+                        <li>Jusqu'à 10 employés</li>
+                        <li>Emails hebdomadaires</li>
+                        <li>Rapports mensuels</li>
+                        <li>Dashboard de base</li>
+                        <li>Support email</li>
+                    </ul>
+                    <a href="#demo" class="btn btn-primary" style="width: 100%;">Commencer gratuitement</a>
+                </div>
+                
+                <div class="pricing-card featured">
+                    <div class="pricing-badge">Le plus populaire</div>
+                    <h3>Business</h3>
+                    <div class="price">49€<span>/mois</span></div>
+                    <p>Pour PME & ETI</p>
+                    <ul class="pricing-features">
+                        <li>Jusqu'à 50 employés</li>
+                        <li>Tout du plan Starter</li>
+                        <li>Dashboard avancé</li>
+                        <li>Export Excel & PDF</li>
+                        <li>Graphiques personnalisés</li>
+                        <li>Support prioritaire</li>
+                    </ul>
+                    <a href="#demo" class="btn btn-primary" style="width: 100%;">Essayer 14 jours</a>
+                </div>
+                
+                <div class="pricing-card">
+                    <h3>Enterprise</h3>
+                    <div class="price">149€<span>/mois</span></div>
+                    <p>Pour grandes entreprises</p>
+                    <ul class="pricing-features">
+                        <li>Jusqu'à 200 employés</li>
+                        <li>Tout du plan Business</li>
+                        <li>Multi-sites</li>
+                        <li>API personnalisée</li>
+                        <li>Onboarding dédié</li>
+                        <li>Support téléphonique</li>
+                    </ul>
+                    <a href="#demo" class="btn btn-primary" style="width: 100%;">Demander une démo</a>
+                </div>
+                
+                <div class="pricing-card">
+                    <h3>Custom</h3>
+                    <div class="price">Sur devis</div>
+                    <p>Pour grands groupes</p>
+                    <ul class="pricing-features">
+                        <li>+200 employés</li>
+                        <li>Tout du plan Enterprise</li>
+                        <li>Déploiement sur mesure</li>
+                        <li>Formations équipes</li>
+                        <li>SLA garanti</li>
+                        <li>Account manager dédié</li>
+                    </ul>
+                    <a href="mailto:contact@carette.fr" class="btn btn-primary" style="width: 100%;">Nous contacter</a>
+                </div>
+            </div>
+        </div>
+    </section>
+    
+    <!-- Testimonials Section -->
+    <section id="testimonials" class="testimonials">
+        <div class="section-container">
+            <div class="section-header">
+                <h2>Ils nous font confiance</h2>
+                <p>Découvrez ce que disent nos clients</p>
+            </div>
+            
+            <div class="testimonials-grid">
+                <div class="testimonial-card">
+                    <p class="testimonial-text">"Carette nous a permis de réduire de 23% nos émissions de trajets domicile-travail en 6 mois. L'outil est simple, les employés adhèrent facilement."</p>
+                    <div class="testimonial-author">
+                        <div class="author-avatar">ML</div>
+                        <div class="author-info">
+                            <h4>Marie Lefort</h4>
+                            <p>DRH - TechCorp (120 employés)</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="testimonial-card">
+                    <p class="testimonial-text">"Indispensable pour notre bilan carbone annuel. Les rapports sont clairs, exploitables directement pour la CSRD."</p>
+                    <div class="testimonial-author">
+                        <div class="author-avatar">PD</div>
+                        <div class="author-info">
+                            <h4>Pierre Dubois</h4>
+                            <p>Responsable RSE - GreenCo</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="testimonial-card">
+                    <p class="testimonial-text">"Setup en 10 minutes chrono. Nos collaborateurs reçoivent leur récap tous les vendredis, ça roule tout seul depuis 8 mois !"</p>
+                    <div class="testimonial-author">
+                        <div class="author-avatar">SC</div>
+                        <div class="author-info">
+                            <h4>Sophie Chen</h4>
+                            <p>CEO - StartupLab (35 employés)</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+    
+    <!-- CTA Section -->
+    <section class="cta">
+        <div class="section-container">
+            <h2>Prêt à réduire votre empreinte carbone ?</h2>
+            <p>Rejoignez les entreprises qui pilotent leurs déplacements avec Carette</p>
+            <a href="#demo" class="btn btn-hero btn-white">Démarrer gratuitement</a>
+        </div>
+    </section>
+    
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-container">
+            <div>
+                <h4>🚗 Carette</h4>
+                <p style="color: #94a3b8; margin-top: 12px;">Solution RSE pour mesurer et réduire les émissions CO2 des trajets domicile-travail.</p>
+            </div>
+            
+            <div>
+                <h4>Produit</h4>
+                <ul>
+                    <li><a href="#features">Fonctionnalités</a></li>
+                    <li><a href="#pricing">Tarifs</a></li>
+                    <li><a href="/demo-rse.html">Démo</a></li>
+                    <li><a href="/docs/API.md">API</a></li>
+                </ul>
+            </div>
+            
+            <div>
+                <h4>Entreprise</h4>
+                <ul>
+                    <li><a href="#testimonials">Témoignages</a></li>
+                    <li><a href="/blog">Blog</a></li>
+                    <li><a href="mailto:contact@carette.fr">Contact</a></li>
+                </ul>
+            </div>
+            
+            <div>
+                <h4>Légal</h4>
+                <ul>
+                    <li><a href="/legal/cgv.html">CGV</a></li>
+                    <li><a href="/legal/cgu.html">CGU</a></li>
+                    <li><a href="/legal/privacy.html">Confidentialité</a></li>
+                    <li><a href="/legal/mentions.html">Mentions légales</a></li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="footer-bottom">
+            <p>&copy; 2026 Carette. Tous droits réservés. Fait avec ❤️ en France.</p>
+        </div>
+    </footer>
+</body>
+</html>

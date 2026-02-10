@@ -282,13 +282,13 @@ def get_reservations_compat():
             rows = cur.fetchall()
             
             reservations = [{
-                'id': row[0],
-                'offer_id': row[1],
-                'user_id': row[2],
-                'status': row[3],
-                'departure': row[4],
-                'destination': row[5],
-                'datetime': row[6].strftime('%Y-%m-%d %H:%M:%S') if row[6] else None,
+                'id': row['id'],
+                'offer_id': row['offer_id'],
+                'user_id': row['passenger_email'],
+                'status': row['status'],
+                'departure': row['departure'],
+                'destination': row['destination'],
+                'datetime': row['datetime'].strftime('%Y-%m-%d %H:%M:%S') if row['datetime'] else None,
                 'trip_type': 'outbound'  # Compatibilité
             } for row in rows]
             

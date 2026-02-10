@@ -22,6 +22,9 @@ BASE_URL = os.getenv('BASE_URL', 'http://localhost:8080')
 # Configuration WhatsApp
 WHATSAPP_ENABLED = os.getenv('WHATSAPP_ENABLED', 'true').lower() == 'true'
 
+# Mode debug : afficher le contenu des emails en console
+EMAIL_DEBUG_MODE = os.getenv('EMAIL_DEBUG_MODE', 'true').lower() == 'true'
+
 
 def send_email(to_email: str, subject: str, html_body: str, text_body: Optional[str] = None, attachments: Optional[List[Dict]] = None):
     """
@@ -35,7 +38,25 @@ def send_email(to_email: str, subject: str, html_body: str, text_body: Optional[
         attachments: Liste de pièces jointes [{'path': '/chemin/image.png', 'cid': 'map_image'}]
     """
     if not SMTP_USER or not SMTP_PASSWORD:
-        print(f"⚠️ Email NON envoyé (SMTP non configuré): {to_email} - {subject}")
+        print(f"\n{'='*80}")
+        print(f"⚠️ EMAIL (SMTP non configuré)")
+        print(f"📧 À: {to_email}")
+        print(f"📝 Sujet: {subject}")
+        print(f"{'='*80}")
+        
+        if EMAIL_DEBUG_MODE:
+            # Afficher le contenu texte de l'email
+            if text_body:
+                print(f"\n{text_body}\n")
+            else:
+                # Extraire du texte du HTML (simplification)
+                import re
+                text_content = re.sub('<[^<]+?>', '', html_body)
+                text_content = re.sub(r'\s+', ' ', text_content).strip()
+                # Afficher seulement les 500 premiers caractères
+                print(f"\n{text_content[:500]}...\n")
+            print(f"{'='*80}\n")
+        
         return False
     
     try:

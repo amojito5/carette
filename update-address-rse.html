@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mettre à jour mon adresse - Carette RSE</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+        }
+        
+        .icon {
+            font-size: 64px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        h1 {
+            color: #1f2937;
+            font-size: 28px;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+        
+        .message {
+            color: #6b7280;
+            font-size: 16px;
+            line-height: 1.6;
+            margin-bottom: 32px;
+            text-align: center;
+        }
+        
+        .info-box {
+            background: #eff6ff;
+            border: 1px solid #3b82f6;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 24px;
+            color: #1e40af;
+            font-size: 14px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border 0.2s;
+        }
+        
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .autocomplete-container {
+            position: relative;
+        }
+        
+        .autocomplete-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid #e5e7eb;
+            border-top: none;
+            border-radius: 0 0 8px 8px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .autocomplete-results.show {
+            display: block;
+        }
+        
+        .autocomplete-item {
+            padding: 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #f3f4f6;
+            font-size: 14px;
+        }
+        
+        .autocomplete-item:hover {
+            background: #f9fafb;
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 14px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .btn:hover {
+            background: #5568d3;
+            transform: translateY(-1px);
+        }
+        
+        .btn:disabled {
+            background: #cbd5e1;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .step {
+            display: none;
+        }
+        
+        .step.active {
+            display: block;
+        }
+        
+        .success-icon {
+            color: #10b981;
+        }
+        
+        .transport-grid {
+            display: grid;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        
+        .day-transport {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: #f9fafb;
+            border-radius: 8px;
+        }
+        
+        .day-label {
+            font-weight: 500;
+            color: #374151;
+        }
+        
+        select {
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f4f6;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .error {
+            background: #fee2e2;
+            border: 1px solid #ef4444;
+            border-radius: 8px;
+            padding: 12px;
+            color: #991b1b;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        .error.show {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Étape 1 : Mise à jour de l'adresse -->
+        <div id="step1" class="step active">
+            <div class="icon">🏠</div>
+            <h1>Mettre à jour mon adresse</h1>
+            <p class="message">
+                Vous avez déménagé ? Mettez à jour votre adresse pour que vos futurs trajets soient calculés correctement.
+            </p>
+            
+            <div class="info-box">
+                ℹ️ <strong>Rassurez-vous :</strong> Votre historique de trajets et d'émissions CO₂ reste intact. 
+                Seule l'adresse pour les futurs calculs sera mise à jour.
+            </div>
+            
+            <div class="error" id="error1"></div>
+            
+            <form id="address-form">
+                <div class="form-group">
+                    <label>Votre ancienne adresse</label>
+                    <input type="text" id="old-address" readonly style="background: #f3f4f6; color: #6b7280;">
+                </div>
+                
+                <div class="form-group">
+                    <label>Votre nouvelle adresse *</label>
+                    <div class="autocomplete-container">
+                        <input type="text" id="new-address" placeholder="Rechercher une adresse..." 
+                               oninput="searchAddress(this)" required>
+                        <div class="autocomplete-results" id="autocomplete-results"></div>
+                    </div>
+                </div>
+                
+                <button type="submit" class="btn" id="submit-address">
+                    Mettre à jour mon adresse
+                </button>
+            </form>
+            
+            <div class="loading" id="loading1">
+                <div class="spinner"></div>
+                <p style="margin-top:16px; color:#6b7280;">Mise à jour en cours...</p>
+            </div>
+        </div>
+        
+        <!-- Étape 2 : Révision des transports par défaut -->
+        <div id="step2" class="step">
+            <div class="icon">🚗</div>
+            <h1>Revoir vos transports par défaut</h1>
+            <p class="message">
+                Votre déménagement a peut-être changé vos habitudes de transport. 
+                Souhaitez-vous mettre à jour vos moyens de transport habituels ?
+            </p>
+            
+            <div class="error" id="error2"></div>
+            
+            <form id="transport-form">
+                <div class="transport-grid" id="transport-grid">
+                    <!-- Rempli dynamiquement -->
+                </div>
+                
+                <button type="submit" class="btn" style="margin-bottom: 12px;">
+                    Enregistrer mes nouveaux transports
+                </button>
+                <button type="button" class="btn" onclick="skipTransport()" 
+                        style="background: #e5e7eb; color: #374151;">
+                    Garder mes anciens transports
+                </button>
+            </form>
+            
+            <div class="loading" id="loading2">
+                <div class="spinner"></div>
+                <p style="margin-top:16px; color:#6b7280;">Enregistrement...</p>
+            </div>
+        </div>
+        
+        <!-- Étape 3 : Confirmation -->
+        <div id="step3" class="step">
+            <div class="icon success-icon">✓</div>
+            <h1>Adresse mise à jour !</h1>
+            <p class="message">
+                Votre nouvelle adresse a été enregistrée avec succès. 
+                Vos prochains trajets seront calculés depuis cette adresse.
+            </p>
+            <p class="message" style="font-size: 14px; color: #9ca3af;">
+                Vous pouvez fermer cette fenêtre.
+            </p>
+        </div>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const token = urlParams.get('token');
+        
+        let currentTransports = {};
+        
+        const transportOptions = {
+            'voiture_solo': '🚗 Voiture solo',
+            'covoiturage': '🚗👥 Covoiturage',
+            'transports_commun': '🚌 Transports en commun',
+            'train': '🚄 Train',
+            'velo': '🚴 Vélo',
+            'marche': '🚶 Marche',
+            'teletravail': '🏠 Télétravail',
+            'ne_travaille_pas': '🏖️ Congés/Absent'
+        };
+        
+        const days = {
+            'lundi': 'Lundi',
+            'mardi': 'Mardi',
+            'mercredi': 'Mercredi',
+            'jeudi': 'Jeudi',
+            'vendredi': 'Vendredi'
+        };
+        
+        if (!token) {
+            showError('error1', 'Lien invalide. Veuillez utiliser le lien depuis votre email.');
+        }
+        
+        // Charger les données utilisateur
+        async function loadUserData() {
+            try {
+                const response = await fetch('/api/v2/rse/users/me', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token })
+                });
+                
+                if (!response.ok) return;
+                
+                const data = await response.json();
+                if (data.departure) {
+                    document.getElementById('old-address').value = data.departure;
+                }
+                if (data.default_transport) {
+                    currentTransports = typeof data.default_transport === 'string' 
+                        ? JSON.parse(data.default_transport) 
+                        : data.default_transport;
+                }
+            } catch (error) {
+                console.error('Erreur chargement données:', error);
+            }
+        }
+        
+        loadUserData();
+        
+        // Autocomplete
+        let searchTimeout = null;
+        
+        async function searchAddress(input) {
+            clearTimeout(searchTimeout);
+            
+            const query = input.value.trim();
+            const resultsDiv = document.getElementById('autocomplete-results');
+            
+            if (query.length < 3) {
+                resultsDiv.classList.remove('show');
+                return;
+            }
+            
+            searchTimeout = setTimeout(async () => {
+                try {
+                    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&countrycodes=fr&limit=5`);
+                    const results = await response.json();
+                    
+                    if (results.length === 0) {
+                        resultsDiv.innerHTML = '<div class="autocomplete-item" style="color: #9ca3af;">Aucun résultat</div>';
+                        resultsDiv.classList.add('show');
+                        return;
+                    }
+                    
+                    resultsDiv.innerHTML = results.map(r => 
+                        `<div class="autocomplete-item" data-address="${r.display_name.replace(/"/g, '&quot;')}">${r.display_name}</div>`
+                    ).join('');
+                    
+                    resultsDiv.querySelectorAll('.autocomplete-item').forEach(item => {
+                        item.addEventListener('click', function() {
+                            input.value = this.dataset.address;
+                            resultsDiv.classList.remove('show');
+                        });
+                    });
+                    
+                    resultsDiv.classList.add('show');
+                } catch (error) {
+                    console.error('Erreur recherche:', error);
+                }
+            }, 300);
+        }
+        
+        document.addEventListener('click', (e) => {
+            if (!e.target.matches('#new-address')) {
+                document.getElementById('autocomplete-results').classList.remove('show');
+            }
+        });
+        
+        // Soumettre nouvelle adresse
+        document.getElementById('address-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const newAddress = document.getElementById('new-address').value.trim();
+            
+            if (!newAddress) {
+                showError('error1', 'Veuillez saisir une adresse');
+                return;
+            }
+            
+            document.getElementById('address-form').style.display = 'none';
+            document.getElementById('loading1').style.display = 'block';
+            
+            try {
+                const response = await fetch('/api/v2/rse/users/update-address', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token, address: newAddress })
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    document.getElementById('address-form').style.display = 'block';
+                    document.getElementById('loading1').style.display = 'none';
+                    showError('error1', data.error || 'Erreur lors de la mise à jour');
+                    return;
+                }
+                
+                // Passer à l'étape 2
+                if (data.suggest_review) {
+                    buildTransportForm();
+                    showStep(2);
+                } else {
+                    showStep(3);
+                }
+            } catch (error) {
+                document.getElementById('address-form').style.display = 'block';
+                document.getElementById('loading1').style.display = 'none';
+                showError('error1', 'Erreur de connexion au serveur');
+            }
+        });
+        
+        // Construire le formulaire des transports
+        function buildTransportForm() {
+            const grid = document.getElementById('transport-grid');
+            grid.innerHTML = '';
+            
+            Object.entries(days).forEach(([key, label]) => {
+                const currentValue = currentTransports[key] || 'voiture_solo';
+                
+                const div = document.createElement('div');
+                div.className = 'day-transport';
+                div.innerHTML = `
+                    <span class="day-label">${label}</span>
+                    <select name="${key}" id="transport-${key}">
+                        ${Object.entries(transportOptions).map(([val, lbl]) => 
+                            `<option value="${val}" ${val === currentValue ? 'selected' : ''}>${lbl}</option>`
+                        ).join('')}
+                    </select>
+                `;
+                grid.appendChild(div);
+            });
+        }
+        
+        // Soumettre transports
+        document.getElementById('transport-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const transports = {};
+            Object.keys(days).forEach(day => {
+                transports[day] = document.getElementById(`transport-${day}`).value;
+            });
+            
+            document.getElementById('transport-form').style.display = 'none';
+            document.getElementById('loading2').style.display = 'block';
+            
+            try {
+                const response = await fetch('/api/v2/rse/users/update-transport', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token, transports })
+                });
+                
+                if (!response.ok) {
+                    document.getElementById('transport-form').style.display = 'block';
+                    document.getElementById('loading2').style.display = 'none';
+                    showError('error2', 'Erreur lors de la mise à jour');
+                    return;
+                }
+                
+                showStep(3);
+            } catch (error) {
+                document.getElementById('transport-form').style.display = 'block';
+                document.getElementById('loading2').style.display = 'none';
+                showError('error2', 'Erreur de connexion');
+            }
+        });
+        
+        function skipTransport() {
+            showStep(3);
+        }
+        
+        function showStep(num) {
+            document.querySelectorAll('.step').forEach(step => step.classList.remove('active'));
+            document.getElementById(`step${num}`).classList.add('active');
+        }
+        
+        function showError(id, message) {
+            const errorDiv = document.getElementById(id);
+            errorDiv.textContent = message;
+            errorDiv.classList.add('show');
+        }
+    </script>
+</body>
+</html>

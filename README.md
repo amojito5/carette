@@ -1,18 +1,26 @@
-# Carette 🚗
+# Carette 🚗 🌱
 
-**Widget de covoiturage autonome et intégrable partout**
+**Widget de covoiturage autonome et calculateur RSE**
 
-Carette est un système complet de covoiturage conçu pour être facilement intégré sur n'importe quel site web (événements, concerts, matchs sportifs, festivals, etc.).
+Carette est un système complet de covoiturage et de suivi carbone, conçu pour être facilement intégré sur n'importe quel site web.
 
 ## 🎯 Fonctionnalités
 
-### Pour les utilisateurs
+### 🚗 Covoiturage
 - **Interface tout-en-un** : Rechercher ou proposer un covoiturage depuis un seul widget
 - **Calcul intelligent** : Itinéraires optimisés avec OSRM, alternatives de routes
 - **Zones de détour** : Affichage visuel des zones accessibles pour les passagers
 - **Aller-retour** : Gestion complète des trajets bidirectionnels
-- **Timeline interactive** : Visualisation des horaires de passage à chaque point
 - **Carte interactive** : MapLibre GL JS pour explorer les trajets
+
+### 🌱 RSE (Responsabilité Sociétale)
+- **Bilan carbone hebdomadaire** : Suivi des trajets domicile-travail
+- **8 modes de transport** : Facteurs d'émission ADEME
+- **Email automatique** : Récapitulatif chaque vendredi à 16h
+- **Validation en 1 clic** : Ou modification via interface web
+- **Persistance MySQL** : Toutes les données stockées et historisées
+
+📚 **Documentation RSE complète** : [docs/WEEKLY_RSE_RECAP.md](docs/WEEKLY_RSE_RECAP.md)
 
 ### Pour les intégrateurs
 - **Embed simple** : Un seul `<script>` tag pour intégrer

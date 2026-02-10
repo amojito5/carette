@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connexion Entreprise - Carette RSE</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 48px;
+            max-width: 440px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        
+        .logo {
+            text-align: center;
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+        
+        h1 {
+            text-align: center;
+            font-size: 28px;
+            font-weight: 900;
+            color: #1e293b;
+            margin-bottom: 8px;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #64748b;
+            margin-bottom: 40px;
+        }
+        
+        .form-group {
+            margin-bottom: 24px;
+        }
+        
+        label {
+            display: block;
+            font-weight: 600;
+            color: #475569;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        
+        input {
+            width: 100%;
+            padding: 14px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 15px;
+            transition: all 0.3s;
+            font-family: inherit;
+        }
+        
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 8px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn:disabled {
+            background: #cbd5e1;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .error-message {
+            background: #fee2e2;
+            border: 2px solid #ef4444;
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 24px;
+            color: #dc2626;
+            font-size: 14px;
+            display: none;
+        }
+        
+        .divider {
+            display: flex;
+            align-items: center;
+            margin: 32px 0;
+        }
+        
+        .divider::before,
+        .divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: #e2e8f0;
+        }
+        
+        .divider span {
+            color: #94a3b8;
+            font-size: 13px;
+            padding: 0 16px;
+        }
+        
+        .magic-link-section {
+            text-align: center;
+        }
+        
+        .magic-link-btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background: #f8fafc;
+            color: #667eea;
+            border: 2px solid #667eea;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .magic-link-btn:hover {
+            background: #667eea;
+            color: white;
+        }
+        
+        .links {
+            text-align: center;
+            margin-top: 32px;
+            padding-top: 24px;
+            border-top: 1px solid #e2e8f0;
+        }
+        
+        .links a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        .links a:hover {
+            text-decoration: underline;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f4f6;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .magic-link-form {
+            display: none;
+            margin-top: 20px;
+        }
+        
+        .magic-link-form.show {
+            display: block;
+        }
+        
+        .success-message {
+            background: #d1fae5;
+            border: 2px solid #10b981;
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 16px;
+            color: #047857;
+            font-size: 14px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">🌱</div>
+        <h1>Espace Entreprise</h1>
+        <p class="subtitle">Connectez-vous à votre dashboard RSE</p>
+        
+        <div class="error-message" id="error-message"></div>
+        <div class="success-message" id="success-message"></div>
+        
+        <form id="login-form">
+            <div class="form-group">
+                <label for="email">Email professionnel</label>
+                <input type="email" id="email" required placeholder="admin@votre-entreprise.fr" autocomplete="email">
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Mot de passe</label>
+                <input type="password" id="password" required placeholder="Votre mot de passe" autocomplete="current-password">
+            </div>
+            
+            <button type="submit" class="btn" id="submit-btn">Se connecter</button>
+        </form>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p style="margin-top: 16px; color: #64748b;">Connexion en cours...</p>
+        </div>
+        
+        <div class="divider">
+            <span>ou</span>
+        </div>
+        
+        <div class="magic-link-section">
+            <button class="magic-link-btn" onclick="toggleMagicLink()">
+                🔗 Recevoir un lien de connexion par email
+            </button>
+            
+            <div class="magic-link-form" id="magic-link-form">
+                <div class="form-group" style="margin-top: 16px;">
+                    <input type="email" id="magic-email" placeholder="votre@email.fr">
+                </div>
+                <button type="button" class="btn" style="background: #10b981;" onclick="sendMagicLink()">
+                    Envoyer le lien
+                </button>
+            </div>
+        </div>
+        
+        <div class="links">
+            <a href="/signup.html">Pas encore inscrit ? Créer un compte →</a>
+        </div>
+    </div>
+    
+    <script>
+        const form = document.getElementById('login-form');
+        const errorMessage = document.getElementById('error-message');
+        const successMessage = document.getElementById('success-message');
+        const loading = document.getElementById('loading');
+        
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value;
+            
+            // Cacher les messages précédents
+            errorMessage.style.display = 'none';
+            successMessage.style.display = 'none';
+            
+            // Afficher le loader
+            form.style.display = 'none';
+            loading.style.display = 'block';
+            
+            try {
+                const response = await fetch('/api/v2/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                const result = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(result.error || 'Erreur de connexion');
+                }
+                
+                // Rediriger vers le dashboard
+                window.location.href = result.dashboard_url;
+                
+            } catch (error) {
+                loading.style.display = 'none';
+                form.style.display = 'block';
+                errorMessage.textContent = error.message;
+                errorMessage.style.display = 'block';
+            }
+        });
+        
+        function toggleMagicLink() {
+            const form = document.getElementById('magic-link-form');
+            form.classList.toggle('show');
+        }
+        
+        async function sendMagicLink() {
+            const email = document.getElementById('magic-email').value.trim();
+            
+            if (!email) {
+                alert('Veuillez entrer votre email');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/v2/auth/send-magic-link', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ email })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    successMessage.textContent = '📧 Si un compte existe avec cet email, vous recevrez un lien de connexion.';
+                    successMessage.style.display = 'block';
+                    document.getElementById('magic-link-form').classList.remove('show');
+                } else {
+                    throw new Error(result.error || 'Erreur');
+                }
+            } catch (error) {
+                errorMessage.textContent = error.message;
+                errorMessage.style.display = 'block';
+            }
+        }
+    </script>
+</body>
+</html>

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Carette - Démo Widget Covoiturage</title>
+    <title>Carette RSE - Plateforme Mobilité Durable</title>
     <style>
         * {
             margin: 0;
@@ -13,7 +13,7 @@
         
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
             min-height: 100vh;
             padding: 20px;
         }
@@ -91,40 +91,35 @@
     
     <div class="container">
         <div class="header">
-            <h1>🚗 Carette</h1>
-            <p>Widget de covoiturage nouvelle génération</p>
+            <h1>🌱 Carette RSE</h1>
+            <p>Plateforme de Mobilité Durable & Reporting CSRD</p>
         </div>
         
         <div class="widget-container">
-            <!-- Widget Carette -->
+            <!-- Widget Carette en mode RSE -->
             <carpool-offer-widget 
-                color-outbound="#c47cffff" 
-                color-return="#ff9c3fff"
-                detour-color="#ecaeffff"
-                font-family="'Sofia Sans', -apple-system, BlinkMacSystemFont, sans-serif"
+                data-mode="rse"
+                data-company-code="LABO2026"
+                color-outbound="#10b981" 
+                color-return="#f59e0b"
+                detour-color="#34d399"
+                font-family="'Inter', -apple-system, BlinkMacSystemFont, sans-serif"
                 theme="light"
-                event-id="demo-event-2025"
-                event-name="Festival Rock Live 2025"
-                event-location="Stade Bollaert-Dellelis"
-                event-date="2026-08-15"
-                event-time="20:00"
-                page-url="https://carette.app/demo"
             >
             </carpool-offer-widget>
         </div>
         
         <div class="footer">
             <p>
+                <a href="/login-company.html" style="color: white; text-decoration: none; background: rgba(255,255,255,0.2); padding: 8px 16px; border-radius: 6px; margin-right: 12px;">🏢 Espace Entreprise</a>
                 Propulsé par <a href="https://github.com/carette" target="_blank">Carette</a> 
-                • Intégration facile pour vos événements
+                • Solution RSE pour entreprises engagées
             </p>
         </div>
     </div>
 
     <!-- Widget Script -->
     <script type="module" src="./frontend/carpool-widget.js"></script>
-    <!-- Payment Simulator (1€ test mode) -->
-    <script src="./frontend/payment-simulator.js"></script>
     
     <!-- Theme Toggle Logic -->
     <script>

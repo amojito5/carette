@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "python backend/api.py",
     "init-db": "python backend/sql.py",
-    "build": "echo 'Build step - TODO: add rollup/esbuild'",
+    "build": "rollup -c rollup.config.js",
+    "build:watch": "rollup -c rollup.config.js --watch",
     "test": "echo 'Tests - TODO: add Jest'"
   },
   "keywords": [

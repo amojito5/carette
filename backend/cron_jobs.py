@@ -8,6 +8,10 @@ import sys
 import os
 from datetime import datetime, timedelta
 import logging
+from dotenv import load_dotenv
+
+# Charger les variables d'environnement
+load_dotenv()
 
 # Setup path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -208,11 +212,76 @@ def send_24h_reminders():
         logger.error(f"❌ Erreur job rappels: {e}", exc_info=True)
 
 
+def send_weekly_rse_recaps():
+    """
+    Envoie les récapitulatifs hebdomadaires RSE à tous les utilisateurs actifs.
+    
+    Crée les entrées en DB pour la semaine si elles n'existent pas,
+    basées sur les habitudes de transport de chaque utilisateur.
+    
+    À lancer tous les vendredis à 16h:
+    0 16 * * 5 cd /home/ubuntu/projects/carette/backend && python3 cron_jobs.py send-weekly-rse
+    """
+    logger.info("📧 Démarrage job: Envoi récapitulatifs RSE hebdomadaires")
+    
+    try:
+        import requests
+        
+        # Appeler l'endpoint API pour envoyer les récaps
+        response = requests.post('http://localhost:9000/api/v2/rse/send-weekly-recap', json={})
+        
+        if response.status_code == 200:
+            data = response.json()
+            logger.info(f"✅ {data.get('message', 'Emails envoyés')}")
+            logger.info(f"   Semaine: {data.get('week', 'N/A')}")
+            
+            if data.get('errors'):
+                for error in data['errors']:
+                    logger.warning(f"   ⚠️ {error}")
+        else:
+            logger.error(f"❌ Erreur API: {response.status_code} - {response.text}")
+            
+    except Exception as e:
+        logger.error(f"❌ Erreur job envoi RSE: {e}", exc_info=True)
+
+
+def auto_confirm_rse_weeks():
+    """
+    Auto-confirme les semaines RSE non confirmées de plus de 7 jours.
+    
+    Si un employé n'a pas cliqué sur Confirmer/Modifier/Absent dans l'email,
+    on considère que c'est une validation tacite après 7 jours.
+    
+    À lancer tous les jours à 2h du matin:
+    0 2 * * * cd /home/ubuntu/projects/carette/backend && python3 cron_jobs.py auto-confirm-rse
+    """
+    logger.info("🕐 Démarrage job: Auto-confirmation semaines RSE >7 jours")
+    
+    try:
+        import requests
+        
+        # Appeler l'endpoint API
+        response = requests.post('http://localhost:9000/api/v2/rse/auto-confirm-old-weeks')
+        
+        if response.status_code == 200:
+            data = response.json()
+            logger.info(f"✅ {data['auto_confirmed']} semaine(s) auto-confirmée(s)")
+            
+            if data.get('details'):
+                for detail in data['details']:
+                    logger.info(f"    - {detail['user']} ({detail['email']}) semaine du {detail['week_start']}")
+        else:
+            logger.error(f"❌ Erreur API: {response.status_code} - {response.text}")
+            
+    except Exception as e:
+        logger.error(f"❌ Erreur job auto-confirmation RSE: {e}", exc_info=True)
+
+
 if __name__ == '__main__':
     import argparse
     
-    parser = argparse.ArgumentParser(description='Cron jobs covoiturage')
-    parser.add_argument('job', choices=['expire', 'reminders', 'all'], 
+    parser = argparse.ArgumentParser(description='Cron jobs covoiturage et RSE')
+    parser.add_argument('job', choices=['expire', 'reminders', 'send-weekly-rse', 'auto-confirm-rse', 'all'], 
                        help='Job à exécuter')
     
     args = parser.parse_args()
@@ -221,8 +290,12 @@ if __name__ == '__main__':
         expire_pending_reservations()
     elif args.job == 'reminders':
         send_24h_reminders()
+    elif args.job == 'send-weekly-rse':
+        send_weekly_rse_recaps()
+    elif args.job == 'auto-confirm-rse':
+        auto_confirm_rse_weeks()
     elif args.job == 'all':
         expire_pending_reservations()
         send_24h_reminders()
-    
-    logger.info("✅ Jobs terminés")
+        send_weekly_rse_recaps()
+        auto_confirm_rse_weeks()

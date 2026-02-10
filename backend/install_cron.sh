@@ -23,6 +23,14 @@ cat >> $CRON_FILE << EOF
 # Envoyer rappels J-1 (tous les jours à 10h)
 0 10 * * * cd $BACKEND_DIR && $PYTHON_BIN cron_jobs.py reminders >> /var/log/carette_cron.log 2>&1
 
+# ========== Carette RSE - Cron Jobs ==========
+
+# Envoyer récap RSE hebdomadaire (tous les vendredis à 16h)
+0 16 * * 5 cd $BACKEND_DIR && $PYTHON_BIN cron_jobs.py send-weekly-rse >> /var/log/carette_cron.log 2>&1
+
+# Auto-confirmer les semaines RSE non confirmées >7 jours (tous les jours à 2h)
+0 2 * * * cd $BACKEND_DIR && $PYTHON_BIN cron_jobs.py auto-confirm-rse >> /var/log/carette_cron.log 2>&1
+
 # ======================================================
 
 EOF
@@ -33,12 +41,14 @@ rm $CRON_FILE
 
 echo "✅ Cron jobs installés:"
 echo ""
-crontab -l | grep -A 10 "Carette Covoiturage"
+crontab -l | grep -A 15 "Carette"
 echo ""
 echo "📝 Logs disponibles dans: /var/log/carette_cron.log"
 echo ""
 echo "Pour tester manuellement:"
 echo "  cd $BACKEND_DIR"
-echo "  python3 cron_jobs.py expire      # Expirer demandes >24h"
-echo "  python3 cron_jobs.py reminders   # Envoyer rappels J-1"
-echo "  python3 cron_jobs.py all         # Exécuter tous les jobs"
+echo "  python3 cron_jobs.py expire           # Expirer demandes >24h"
+echo "  python3 cron_jobs.py reminders        # Envoyer rappels J-1"
+echo "  python3 cron_jobs.py send-weekly-rse  # Envoyer récaps RSE hebdo"
+echo "  python3 cron_jobs.py auto-confirm-rse # Auto-confirmer semaines RSE >7j"
+echo "  python3 cron_jobs.py all              # Exécuter tous les jobs"
