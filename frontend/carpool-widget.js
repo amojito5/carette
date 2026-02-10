@@ -5707,27 +5707,13 @@ class CarpoolOfferWidget extends HTMLElement {
   <div class="form">
   ${(this.isRecurrentMode() || this.isRseMode()) ? '' : `
   <!-- Header pour afficher le nombre de trajets disponibles (Find only) - masqué en mode récurrent -->
-  <div id="find-header" class="find-only" style="display: none; margin-bottom: 24px; text-align: center; background: linear-gradient(135deg, var(--color-outbound) 0%, var(--color-outbound-dark) 100%); border-radius: 20px; padding: 28px 24px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12); position: relative; overflow: hidden;">
-    <!-- Effet de brillance -->
-    <div style="position: absolute; top: 0; left: 0; right: 0; height: 50%; background: linear-gradient(180deg, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0) 100%); border-radius: 20px 20px 0 0; pointer-events: none;"></div>
-    
-    <div style="position: relative; z-index: 1;">
-      <div style="display: inline-flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 12px; background: rgba(255,255,255,0.25); backdrop-filter: blur(10px); border-radius: 100px; padding: 12px 28px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-          <circle cx="9" cy="7" r="4" stroke="white" stroke-width="2.5"/>
-          <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <h3 id="find-header-count" style="margin: 0; font-size: 32px; font-weight: 900; color: white; letter-spacing: -0.02em; font-family:${this.fontFamily}; text-shadow: 0 2px 4px rgba(0,0,0,0.2);">— trajets</h3>
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M12 2L2 7l10 5 10-5-10-5z" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M2 17l10 5 10-5M2 12l10 5 10-5" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </div>
-      <p id="find-header-subtitle" style="margin: 0; font-size: 16px; color: rgba(255,255,255,0.95); font-weight: 600; font-family:${this.fontFamily}; text-shadow: 0 1px 2px rgba(0,0,0,0.15);">
-        🎯 Trouvez un covoiturage pour cet évènement
-      </p>
-    </div>
+  <div id="find-header" class="find-only" style="display: none; margin-bottom: 20px; text-align: center; background: #ffffff; border: 1px solid #e5e7eb; border-radius: 16px; padding: 22px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);">
+    <p id="find-header-subtitle" style="margin: 0 0 10px 0; font-size: 18px; color: #1f2937; font-weight: 700; font-family:${this.fontFamily}; line-height: 1.4;">
+      ${this.eventName 
+        ? `Trouve ton covoit pour <span style="color: var(--color-outbound, #6366f1);">${this.eventName}</span> ! 🚗`
+        : `🎯 Trouvez un covoiturage pour cet évènement`}
+    </p>
+    <div id="find-header-count" style="display: inline-block; margin: 0; font-size: 13px; font-weight: 600; color: #6b7280; font-family:${this.fontFamily}; background: #f3f4f6; border-radius: 100px; padding: 4px 14px;">— trajets</div>
   </div>
   `}
   
